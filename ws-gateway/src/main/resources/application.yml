@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: ws-gateway
+  threads:
+    virtual:
+      enabled: true   # Java 25 Virtual Thread — I/O 바운드 게이트웨이 (가드레일: 풀링 금지)
+
+server:
+  port: 8080
+
+wedocs:
+  engine:
+    target: localhost:50051   # crdt-engine gRPC (bidi Sync)

@@ -1,0 +1,16 @@
+# Java(messages + gRPC) stub 생성 — controller SSOT의 proto를 buf 원격 git input으로 소비(ADR-0010).
+# 로컬 개발 = 로컬 경로. CI/재현 = git remote(태그 핀)로 inputs 교체.
+version: v2
+inputs:
+  - directory: ../weDocs-controller/proto
+  # canonical(CI, 태그 핀):
+  # - git_repo: https://github.com/ressKim-io/weDocs-controller.git
+  #   subdir: proto
+  #   ref: proto-v0.1.0
+plugins:
+  # protobuf-java 4.34.1 런타임 대응
+  - remote: buf.build/protocolbuffers/java:v34.1
+    out: ws-gateway/build/generated/buf/java
+  # grpc-java 1.82.1 런타임 대응
+  - remote: buf.build/grpc/java:v1.82.1
+    out: ws-gateway/build/generated/buf/java
