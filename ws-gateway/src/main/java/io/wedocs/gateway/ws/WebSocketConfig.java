@@ -18,7 +18,10 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        // TODO(M1): docId 라우팅(경로/첫 메시지) → consistent-hash 메타데이터로 엔진 분배.
-        registry.addHandler(handler, "/ws/doc").setAllowedOriginPatterns("*");
+        // /ws/doc/{room} 의 마지막 세그먼트가 docId(=room). 핸들러가 URI에서 추출해
+        // 엔진 Sync 스트림의 gRPC 메타데이터 doc-id 로 전달한다(§D-1).
+        // TODO(Phase 5): 네이티브 WS는 CSRF 보호가 없어 Origin 검사가 유일한 방어선 →
+        // "*" 대신 실제 프론트엔드 Origin으로 제한. M1 로컬 데모에선 "*" 유지.
+        registry.addHandler(handler, "/ws/doc/*").setAllowedOriginPatterns("*");
     }
 }
