@@ -51,7 +51,8 @@ final class Lib0 {
             long result = 0;
             int shift = 0;
             while (pos < buf.length) {
-                // shift>=63이면 다음 7비트가 long 부호 비트를 침범 → 음수 반환 전에 차단(손상/악의 프레임).
+                // shift=63 시점은 10번째 바이트의 첫 비트가 long 부호 비트(63)에 닿아 양수 보장 불가
+                // (상위 비트는 64를 넘어 소실) → 음수/손상값 반환 전에 차단(손상·악의 프레임).
                 if (shift >= 63) {
                     throw new IllegalArgumentException("varUint 오버플로(>63비트)");
                 }

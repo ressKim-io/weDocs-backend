@@ -122,6 +122,23 @@ class YProtocolCodecTest {
     }
 
     @Test
+    @DisplayName("ServerFrame{state_vector+update 둘 다} 인코드 → state_vector 우선(SyncStep1), update 드롭")
+    void encodeOutbound_bothFieldsSet_prioritisesStateVector() {
+        // Given: 엔진 계약상 발생하지 않아야 하나 proto가 oneof가 아니라 가능 — 우선순위를 고정(무성 유실 방지)
+        ServerFrame frame = ServerFrame.newBuilder()
+                .setStateVector(ByteString.copyFrom(new byte[]{1, 2}))
+                .setUpdate(ByteString.copyFrom(new byte[]{9, 8}))
+                .build();
+
+        // When
+        Optional<byte[]> ws = codec.encodeOutbound(frame);
+
+        // Then: [messageSync=0, SyncStep1=0, varBuffer({1,2})] — update({9,8})는 전송되지 않음
+        assertThat(ws).isPresent();
+        assertThat(ws.get()).containsExactly(0x00, 0x00, 0x02, 1, 2);
+    }
+
+    @Test
     @DisplayName("라운드트립: ServerFrame{update} 인코드 → 같은 바이트를 inbound 디코드하면 update 복원")
     void roundTrip_updateFrame() {
         // Given

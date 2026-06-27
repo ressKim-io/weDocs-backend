@@ -61,7 +61,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                         .ifPresent(bridge.toEngine()::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
-                log.warn("malformed frame dropped session={} room={}: {}", id, bridge.room(), e.toString());
+                log.warn("malformed frame dropped session={} room={}", id, bridge.room(), e);
             }
             return bridge;
         });
@@ -78,7 +78,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         // 전송 오류 뒤에는 afterConnectionClosed가 이어져 정리하므로 여기선 로깅만.
-        log.warn("ws transport error session={}: {}", session.getId(), exception.toString());
+        log.warn("ws transport error session={}", session.getId(), exception);
     }
 
     /// 엔진 → 브라우저 방향. 이 콜백만이 WS의 유일한 writer다(§D-6).
@@ -91,7 +91,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
             @Override
             public void onError(Throwable t) {
-                log.warn("engine stream error session={} room={}: {}", session.getId(), room, t.toString());
+                log.warn("engine stream error session={} room={}", session.getId(), room, t);
                 endSession(session, CloseStatus.SERVER_ERROR);
             }
 
@@ -106,7 +106,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         try {
             session.sendMessage(new BinaryMessage(bytes));
         } catch (IOException e) {
-            log.warn("ws send failed session={}: {}", session.getId(), e.toString());
+            log.warn("ws send failed session={}", session.getId(), e);
             endSession(session, CloseStatus.SERVER_ERROR);
         }
     }
@@ -126,6 +126,9 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             return "";
         }
         String path = uri.getPath(); // 예: /ws/doc/demo
+        if (path == null) { // opaque URI 방어(표준 WS 업그레이드 URI는 항상 hierarchical)
+            return "";
+        }
         int lastSlash = path.lastIndexOf('/');
         return lastSlash >= 0 ? path.substring(lastSlash + 1) : "";
     }
@@ -142,15 +145,16 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                 session.close(status);
             }
         } catch (IOException e) {
-            log.debug("ws close failed session={}: {}", session.getId(), e.toString());
+            log.debug("ws close failed session={}", session.getId(), e);
         }
     }
 
     private static void completeQuietly(StreamObserver<ClientFrame> toEngine) {
         try {
             toEngine.onCompleted();
-        } catch (RuntimeException ignored) {
-            // 이미 종료된 스트림이면 무시
+        } catch (RuntimeException e) {
+            // 이미 종료된 스트림이면 정상. 세션 정리를 막지 않도록 흡수하되, 예기치 못한 상태 진단을 위해 기록.
+            log.debug("completeQuietly 무시 — 스트림이 이미 종료된 것으로 보임", e);
         }
     }
 

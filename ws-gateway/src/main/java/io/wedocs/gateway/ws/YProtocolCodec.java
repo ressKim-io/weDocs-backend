@@ -3,6 +3,8 @@ package io.wedocs.gateway.ws;
 import com.google.protobuf.ByteString;
 import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.ServerFrame;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Optional;
@@ -12,6 +14,8 @@ import java.util.Optional;
 /// 게이트웨이는 Y.Doc이 없어 SyncStep1에 직접 답할 수 없으므로 sync 권위는 엔진에 있다.
 /// 여기서는 프레이밍만 변환한다. (SSOT §C/§D)
 final class YProtocolCodec {
+
+    private static final Logger log = LoggerFactory.getLogger(YProtocolCodec.class);
 
     /// y-websocket top-level 메시지 타입
     static final int MESSAGE_SYNC = 0;
@@ -45,11 +49,20 @@ final class YProtocolCodec {
     }
 
     /// 엔진 → 브라우저. state_vector는 SyncStep1, update는 전부 Update(2)로 프레이밍한다(§D-4).
+    ///
+    /// 엔진 계약(verified, crdt-engine service.rs): ServerFrame은 둘 중 정확히 하나만 채운다 —
+    /// open=state_vector만(service.rs:66), inbound diff·broadcast=update만. proto가 oneof가 아니라
+    /// 강제되진 않으므로, 만에 하나 둘 다 set이면 state_vector 우선 + 경고(무성 데이터 유실을 가시화).
     Optional<byte[]> encodeOutbound(ServerFrame frame) {
-        if (!frame.getStateVector().isEmpty()) {
+        boolean hasStateVector = !frame.getStateVector().isEmpty();
+        boolean hasUpdate = !frame.getUpdate().isEmpty();
+        if (hasStateVector && hasUpdate) {
+            log.warn("ServerFrame에 state_vector와 update가 모두 설정됨 — state_vector만 전송(update 드롭). 엔진 계약 위반?");
+        }
+        if (hasStateVector) {
             return Optional.of(syncMessage(SYNC_STEP1, frame.getStateVector()));
         }
-        if (!frame.getUpdate().isEmpty()) {
+        if (hasUpdate) {
             return Optional.of(syncMessage(SYNC_UPDATE, frame.getUpdate()));
         }
         return Optional.empty();

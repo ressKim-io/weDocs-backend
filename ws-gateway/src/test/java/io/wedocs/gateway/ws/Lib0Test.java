@@ -32,14 +32,15 @@ class Lib0Test {
     }
 
     @Test
-    @DisplayName("readVarUint은 known-byte 벡터를 정확히 디코드한다")
+    @DisplayName("readVarUint은 known-byte 벡터를 정확히 디코드한다 (encode와 대칭)")
     void readVarUint_decodesKnownVectors() {
-        // Given: [0x80, 0x01] = 128
-        Lib0.Decoder decoder = new Lib0.Decoder(new byte[]{(byte) 0x80, (byte) 0x01});
-
-        // When/Then
-        assertThat(decoder.readVarUint()).isEqualTo(128L);
-        assertThat(decoder.hasMore()).isFalse();
+        // writeVarUint_matchesKnownVectors와 동일한 6개 벡터를 역방향으로 검증 — 바이트 순서 회귀 차단
+        assertThat(new Lib0.Decoder(new byte[]{0x00}).readVarUint()).isEqualTo(0L);
+        assertThat(new Lib0.Decoder(new byte[]{0x01}).readVarUint()).isEqualTo(1L);
+        assertThat(new Lib0.Decoder(new byte[]{0x7F}).readVarUint()).isEqualTo(127L);
+        assertThat(new Lib0.Decoder(new byte[]{(byte) 0x80, 0x01}).readVarUint()).isEqualTo(128L);
+        assertThat(new Lib0.Decoder(new byte[]{(byte) 0xFF, 0x7F}).readVarUint()).isEqualTo(16383L);
+        assertThat(new Lib0.Decoder(new byte[]{(byte) 0x80, (byte) 0x80, 0x01}).readVarUint()).isEqualTo(16384L);
     }
 
     @Test

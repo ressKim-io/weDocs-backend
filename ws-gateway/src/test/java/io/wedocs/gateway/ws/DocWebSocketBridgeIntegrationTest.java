@@ -13,6 +13,7 @@ import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.CrdtEngineGrpc;
 import io.wedocs.proto.crdt.ServerFrame;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,8 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,6 +52,8 @@ class DocWebSocketBridgeIntegrationTest {
     @LocalServerPort
     private int port;
 
+    private final List<WebSocketSession> openedSessions = new ArrayList<>();
+
     @DynamicPropertySource
     static void engineTarget(DynamicPropertyRegistry registry) {
         int grpcPort = ENGINE.startOnRandomPort();
@@ -63,6 +68,19 @@ class DocWebSocketBridgeIntegrationTest {
     @BeforeEach
     void resetEngine() {
         ENGINE.reset();
+    }
+
+    @AfterEach
+    void closeSessions() {
+        // 어서션 실패로 테스트 본문의 close가 건너뛰어져도 세션이 누수되지 않도록 무조건 정리(테스트 격리).
+        openedSessions.forEach(session -> {
+            try {
+                session.close();
+            } catch (Exception ignored) {
+                // 이미 닫힌 세션이면 무시
+            }
+        });
+        openedSessions.clear();
     }
 
     @Test
@@ -82,8 +100,6 @@ class DocWebSocketBridgeIntegrationTest {
         assertThat(frame.getDocId()).isEqualTo("demo");
         assertThat(frame.getStateVector().toByteArray()).containsExactly(1, 2, 3);
         assertThat(frame.getUpdate().isEmpty()).isTrue();
-
-        session.close();
     }
 
     @Test
@@ -103,9 +119,6 @@ class DocWebSocketBridgeIntegrationTest {
         byte[] expected = {0x00, 0x02, 0x02, 0x55, 0x66};
         assertThat(clientA.received.poll(TIMEOUT_MS, TimeUnit.MILLISECONDS)).isEqualTo(expected);
         assertThat(clientB.received.poll(TIMEOUT_MS, TimeUnit.MILLISECONDS)).isEqualTo(expected);
-
-        sessionA.close();
-        sessionB.close();
     }
 
     @Test
@@ -125,9 +138,11 @@ class DocWebSocketBridgeIntegrationTest {
 
     private WebSocketSession connect(BinaryWebSocketHandler handler, String room) throws Exception {
         String url = "ws://localhost:" + port + "/ws/doc/" + room;
-        return new StandardWebSocketClient()
+        WebSocketSession session = new StandardWebSocketClient()
                 .execute(handler, url)
                 .get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        openedSessions.add(session); // @AfterEach에서 무조건 정리되도록 추적
+        return session;
     }
 
     /// WS 클라이언트가 받은 바이너리 메시지를 모은다.
