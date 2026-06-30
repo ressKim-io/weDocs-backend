@@ -6,21 +6,25 @@ create table users (
     email         varchar(255) not null unique,
     password_hash varchar(255) not null,
     display_name  varchar(255) not null,
-    created_at    timestamptz  not null default now()
+    -- 전역 운영 역할 (ADR-0016). 워크스페이스 역할과 직교. enum SystemRole.
+    system_role   varchar(16)  not null default 'user' check (system_role in ('user', 'system_admin')),
+    created_at    timestamptz  not null default now(),
+    updated_at    timestamptz  not null default now()
 );
 
 create table workspaces (
     id         uuid         primary key,
     name       varchar(255) not null,
     owner_id   uuid         not null references users(id),
-    created_at timestamptz  not null default now()
+    created_at timestamptz  not null default now(),
+    updated_at timestamptz  not null default now()
 );
 
--- 워크스페이스 멤버십 (baseline 권한). role: owner | member (PRD §4.1)
+-- 워크스페이스 멤버십 (baseline 권한). role: owner | member (PRD §4.1). enum WorkspaceRole=1b.
 create table workspace_members (
     workspace_id uuid        not null references workspaces(id) on delete cascade,
     user_id      uuid        not null references users(id) on delete cascade,
-    role         varchar(16) not null,
+    role         varchar(16) not null check (role in ('owner', 'member')),
     primary key (workspace_id, user_id)
 );
 
@@ -38,11 +42,11 @@ create table pages (
 create index idx_pages_workspace on pages(workspace_id);
 create index idx_pages_parent on pages(parent_id);
 
--- 페이지별 공유(override, 트리 상속). level: editor | viewer (PRD §4.2)
+-- 페이지별 공유(override, 트리 상속). level: editor | viewer (PRD §4.2). enum PagePermissionLevel=1b.
 create table page_permissions (
     page_id uuid        not null references pages(id) on delete cascade,
     user_id uuid        not null references users(id) on delete cascade,
-    level   varchar(16) not null,
+    level   varchar(16) not null check (level in ('editor', 'viewer')),
     primary key (page_id, user_id)
 );
 
