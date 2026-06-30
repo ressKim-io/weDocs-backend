@@ -7,6 +7,9 @@ build/
 
 # buf 생성물은 build/ 아래 → gitignored (make proto-gen 으로 재생성)
 
+# OTel javaagent — make run-otel 이 GitHub releases에서 받음(버전핀, 커밋 안 함)
+tools/*.jar
+
 # OS / IDE
 .DS_Store
 .idea/
