@@ -11,7 +11,7 @@ import java.util.UUID;
 /// 트리 동시성은 관계형(doc-service 트랜잭션), 내용 동시성은 CRDT 엔진 (ADR-0012).
 @Entity
 @Table(name = "pages")
-public class Page {
+public class Page extends BaseTimeEntity {
 
     @Id
     private UUID id;
@@ -23,7 +23,7 @@ public class Page {
     @Column(name = "parent_id")
     private UUID parentId;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 512)
     private String title;
 
     @Column(name = "position", nullable = false)
@@ -41,6 +41,11 @@ public class Page {
         this.title = title;
         this.position = position;
         this.archived = archived;
+    }
+
+    /// 제목 변경 = 편집 → updated_at 갱신(Auditing). 트리 이동(reparent)은 사이클 검사가 필요해 1b 서비스 계층.
+    public void rename(String title) {
+        this.title = title;
     }
 
     public UUID getId() { return id; }

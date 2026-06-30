@@ -10,7 +10,7 @@ import java.util.UUID;
 /// 팀 지식의 경계. 모든 페이지의 최상위 컨테이너.
 @Entity
 @Table(name = "workspaces")
-public class Workspace {
+public class Workspace extends BaseTimeEntity {
 
     @Id
     private UUID id;
