@@ -13,8 +13,14 @@ java {
 repositories { mavenCentral() }
 
 dependencies {
-    // Spring Boot BOM(platform) — starter·flyway·testcontainers·postgresql 버전을 BOM이 관리.
+    // Spring Boot BOM(platform) — starter·flyway·testcontainers·postgresql·lombok 버전을 BOM이 관리.
     implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+
+    // BOM 관리 버전 = 1.18.46 (JDK 25 지원은 1.18.40+, 검증 완료).
+    // annotationProcessor는 implementation을 extendsFrom하지 않아 platform 제약이 전파되지 않음 → 별도 명시.
+    compileOnly("org.projectlombok:lombok")
+    annotationProcessor(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    annotationProcessor("org.projectlombok:lombok")
 
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
