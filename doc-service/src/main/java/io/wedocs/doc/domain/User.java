@@ -5,10 +5,15 @@ import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.util.UUID;
 
 /// 계정 주체. system_role = 전역 운영 역할(ADR-0016). 인증/REST는 1c.
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "users")
 public class User extends BaseTimeEntity {
@@ -29,8 +34,6 @@ public class User extends BaseTimeEntity {
     @Column(name = "system_role", nullable = false, length = 16)
     private SystemRole systemRole = SystemRole.USER;
 
-    protected User() { }
-
     public User(UUID id, String email, String passwordHash, String displayName) {
         this(id, email, passwordHash, displayName, SystemRole.USER);
     }
@@ -42,10 +45,4 @@ public class User extends BaseTimeEntity {
         this.displayName = displayName;
         this.systemRole = systemRole;
     }
-
-    public UUID getId() { return id; }
-    public String getEmail() { return email; }
-    public String getPasswordHash() { return passwordHash; }
-    public String getDisplayName() { return displayName; }
-    public SystemRole getSystemRole() { return systemRole; }
 }
