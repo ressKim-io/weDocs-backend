@@ -1,0 +1,43 @@
+name: security-scan
+
+# 시크릿 + 의존성 취약점 스캔 게이트. 폴리레포 표준: controller ci/README.md §보안 스캔
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 20 * * 0" # 주간 시크릿 드리프트 스캔 (UTC 일 20:00 = KST 월 05:00)
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # PR에 결과 코멘트
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # 전체 히스토리 스캔 — 과거 커밋에 묻힌 시크릿까지 검출
+      # 개인(User) 계정 레포 = GITLEAKS_LICENSE 불요 (organization만 필요, 2026-07-03 확인)
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # PR이 새로 들이는 의존성의 취약점/라이선스 diff 게이트.
+  # 전체 트리 상시 감시는 dependency-submission.yml이 켜는 Dependabot alerts가 담당.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5
+        with:
+          # dependency-submission.yml의 PR 스냅샷 제출 완료까지 재시도 (gradle/actions 공식 조합)
+          retry-on-snapshot-warnings: true
+          retry-on-snapshot-warnings-timeout: 300
+          fail-on-severity: high # 게이트는 high+ — moderate 이하는 Dependabot alerts로 추적
