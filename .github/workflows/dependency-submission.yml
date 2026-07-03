@@ -1,0 +1,23 @@
+name: dependency-submission
+
+# Gradle 의존성 그래프를 GitHub Dependency Graph에 제출 → Dependabot alerts 활성화.
+# PR 트리거는 스냅샷을 만들어 security-scan.yml의 dependency-review가 diff 게이트를 수행하게 한다.
+# (gradle/actions 공식 조합 — lockfile 불요, Gradle 실제 해석 기반. 2026-07-03 확인)
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write # Dependency Submission API
+
+jobs:
+  dependency-submission:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25" # ws-gateway toolchain(JDK 25) 일치
+      - uses: gradle/actions/dependency-submission@v6
