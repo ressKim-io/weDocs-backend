@@ -1,0 +1,7 @@
+# 테스트 기본값 — GrpcServerLifecycle은 @Component라 모든 @SpringBootTest 컨텍스트(1a의
+# PageTreePersistenceTest 포함)에 자동으로 뜬다. 기본값 true를 그대로 두면 실 TCP 포트 50052를
+# 바인딩하려 시도해 로컬 bootRun과 충돌하거나 CI 병렬 실행 시 포트 경합이 난다.
+# gRPC 통합테스트(DocServiceGrpcIntegrationTest)는 이 실 서버가 아니라 InProcessServerBuilder를 쓴다.
+wedocs:
+  doc-service:
+    grpc-enabled: false

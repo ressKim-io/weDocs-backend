@@ -45,8 +45,8 @@ dependencies {
     // Testcontainers 2.x: 아티팩트 좌표 변경(testcontainers- 접두사). BOM=spring-boot 4.1.0(tc 2.0.5).
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
-    // InProcessServerBuilder/InProcessChannelBuilder는 grpc-core(io.grpc.inprocess)에 있고
-    // grpc-netty-shaded가 이미 전이 의존 — 별도 grpc-testing 불필요(JUnit4 GrpcCleanupRule은 JUnit5 미사용).
+    // InProcessServerBuilder/InProcessChannelBuilder 전용 — grpc-core에 없고 별도 모듈로 분리되어 있음(실측 확인).
+    testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
 }
 
 // buf 생성 stub(build/generated/buf/java)을 소스셋에 포함 — make proto-gen 으로 생성.
