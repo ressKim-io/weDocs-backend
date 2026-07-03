@@ -86,6 +86,46 @@ class PermissionServiceTest {
     }
 
     @Test
+    @DisplayName("자기 페이지에 명시적 viewer 권한이 있으면 조상 탐색 없이 그 권한을 즉시 사용한다")
+    void resolve_usesOwnPageExplicitPermission_withoutWalkingAncestors() {
+        // Given: 루트 페이지 자신에 viewer 명시 권한(hop=0) — 워크스페이스 관계는 조회될 필요가 없다
+        UUID workspaceId = UUID.randomUUID();
+        UUID pageId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        when(pages.findById(pageId)).thenReturn(Optional.of(rootPage(pageId, workspaceId)));
+        when(pagePermissions.findById_PageIdAndId_UserId(pageId, userId))
+                .thenReturn(Optional.of(new PagePermission(pageId, userId, PagePermissionLevel.VIEWER)));
+
+        // When
+        EffectivePermission result = service.resolve(pageId, userId);
+
+        // Then
+        assertThat(result).isEqualTo(EffectivePermission.granted(EffectiveRole.VIEWER));
+    }
+
+    @Test
+    @DisplayName("워크스페이스 owner라도 특정 페이지에 명시적으로 viewer로 강등되면 그 권한을 따른다")
+    void resolve_honorsExplicitDowngrade_evenForWorkspaceOwner() {
+        // Given: 워크스페이스 owner이지만 이 페이지엔 viewer로 명시 오버라이드(PRD §4.2 "가장 가까운
+        //        명시 권한 우선"의 가장 민감한 케이스 — 넓은 권한을 좁히는 방향의 오버라이드)
+        UUID workspaceId = UUID.randomUUID();
+        UUID pageId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        when(pages.findById(pageId)).thenReturn(Optional.of(rootPage(pageId, workspaceId)));
+        when(pagePermissions.findById_PageIdAndId_UserId(pageId, userId))
+                .thenReturn(Optional.of(new PagePermission(pageId, userId, PagePermissionLevel.VIEWER)));
+        // owner 멤버십은 올바른 구현이라면 조회되지 않는다(명시 권한에서 이미 확정) — lenient.
+        lenient().when(workspaceMembers.findById_WorkspaceIdAndId_UserId(workspaceId, userId))
+                .thenReturn(Optional.of(new WorkspaceMember(workspaceId, userId, WorkspaceRole.OWNER)));
+
+        // When
+        EffectivePermission result = service.resolve(pageId, userId);
+
+        // Then: owner 권한보다 페이지별 명시적 viewer 오버라이드가 우선
+        assertThat(result).isEqualTo(EffectivePermission.granted(EffectiveRole.VIEWER));
+    }
+
+    @Test
     @DisplayName("조상 페이지의 명시 권한이 자손에게 상속된다")
     void resolve_inheritsExplicitPermission_fromAncestor() {
         // Given: root(editor 명시) → parent(명시 없음) → child(명시 없음)

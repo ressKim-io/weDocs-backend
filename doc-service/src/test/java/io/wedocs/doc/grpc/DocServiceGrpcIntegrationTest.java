@@ -142,6 +142,18 @@ class DocServiceGrpcIntegrationTest {
                 .hasMessageContaining("INVALID_ARGUMENT");
     }
 
+    @Test
+    @DisplayName("형식이 틀린 user_id는 INVALID_ARGUMENT를 반환한다")
+    void checkPermission_rejectsInvalidArgument_whenUserIdMalformed() {
+        // When/Then: doc_id는 유효하고 user_id만 잘못된 경우 — 두 번째 parseUuidOrFail 분기.
+        assertThatThrownBy(() -> stub.checkPermission(CheckPermissionRequest.newBuilder()
+                .setDocId(UUID.randomUUID().toString())
+                .setUserId("not-a-uuid")
+                .build()))
+                .isInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("INVALID_ARGUMENT");
+    }
+
     // ---- SaveSnapshot ----
 
     @Test

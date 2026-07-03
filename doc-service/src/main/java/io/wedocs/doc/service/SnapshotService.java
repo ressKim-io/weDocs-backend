@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.UUID;
 
 /// CRDT 스냅샷 영속화 오케스트레이션 (ADR-0013: 엔진 push, version은 엔진이 권위).
@@ -39,5 +40,23 @@ public class SnapshotService {
 
     public record SnapshotView(byte[] snapshot, long version) {
         static final SnapshotView EMPTY = new SnapshotView(new byte[0], 0L);
+
+        // record 기본 equals/hashCode는 배열 필드를 참조 비교한다 — 내용이 같아도 다른 인스턴스면
+        // 다르다고 판정되는 함정을 막기 위해 Arrays 기반으로 명시 오버라이드.
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof SnapshotView other)) {
+                return false;
+            }
+            return version == other.version && Arrays.equals(snapshot, other.snapshot);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * Arrays.hashCode(snapshot) + Long.hashCode(version);
+        }
     }
 }

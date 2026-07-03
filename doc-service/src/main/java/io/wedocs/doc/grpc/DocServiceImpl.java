@@ -111,6 +111,10 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             responseObserver.onCompleted();
         } catch (PageNotFoundException e) {
             failNotFound(responseObserver, "GetDocMeta");
+        } catch (RuntimeException e) {
+            // FK 불변식(page.workspace_id → workspaces.id)이 깨진 경우 DocMetaService가 던짐 —
+            // 정상 경로에선 도달 불가하지만, 도달해도 원인이 클라이언트로 새지 않게 방어(P4).
+            failInternal(responseObserver, "GetDocMeta", e);
         }
     }
 
@@ -121,7 +125,7 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
         try {
             return UUID.fromString(raw);
         } catch (IllegalArgumentException e) {
-            log.warn("malformed id in DocService request, length={}", raw.length());
+            log.warn("malformed id in DocService request, length={}", raw.length(), e);
             responseObserver.onError(
                     Status.INVALID_ARGUMENT.withDescription("malformed id").asRuntimeException());
             return null;
@@ -131,6 +135,11 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
     private static void failNotFound(StreamObserver<?> responseObserver, String rpcName) {
         log.warn("{}: page not found", rpcName);
         responseObserver.onError(Status.NOT_FOUND.withDescription("page not found").asRuntimeException());
+    }
+
+    private static void failInternal(StreamObserver<?> responseObserver, String rpcName, RuntimeException cause) {
+        log.error("{}: unexpected internal error", rpcName, cause);
+        responseObserver.onError(Status.INTERNAL.withDescription("internal error").asRuntimeException());
     }
 
     private static Role toProtoRole(EffectivePermission.EffectiveRole role) {
