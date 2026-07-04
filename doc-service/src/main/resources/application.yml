@@ -21,3 +21,11 @@ spring:
 
 server:
   port: 8081   # ws-gateway=8080
+
+wedocs:
+  doc-service:
+    # DocService 내부 gRPC 서버(M2 1b). engine=50051, gateway=8080, 위 REST(1c 예정)=8081과 별도 포트.
+    grpc-port: 50052
+    grpc-enabled: true   # 테스트 기본값은 false(src/test/resources/application.yml) — 포트 충돌 방지
+    # 4MB — crdt-engine tonic 인바운드 한도(기존)와 정합. 런타임 기본값 암묵 의존 금지(secure-coding P2/P5).
+    grpc-max-inbound-message-size: 4194304

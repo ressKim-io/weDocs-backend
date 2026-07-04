@@ -12,6 +12,9 @@ java {
 
 repositories { mavenCentral() }
 
+val grpcVersion = "1.82.1"
+val protobufVersion = "4.34.1"
+
 dependencies {
     // Spring Boot BOM(platform) — starter·flyway·testcontainers·postgresql·lombok 버전을 BOM이 관리.
     implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
@@ -30,11 +33,25 @@ dependencies {
     runtimeOnly("org.flywaydb:flyway-database-postgresql") // Flyway 10+ Postgres 방언 모듈
     runtimeOnly("org.postgresql:postgresql")
 
+    // gRPC 서버(DocService, M2 1b) — ws-gateway의 클라이언트와 동일 버전 고정(생성 코드 정합).
+    implementation("io.grpc:grpc-netty-shaded:$grpcVersion")
+    implementation("io.grpc:grpc-protobuf:$grpcVersion")
+    implementation("io.grpc:grpc-stub:$grpcVersion")
+    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    compileOnly("org.apache.tomcat:annotations-api:6.0.53") // grpc 생성 코드의 @Generated
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     // Testcontainers 2.x: 아티팩트 좌표 변경(testcontainers- 접두사). BOM=spring-boot 4.1.0(tc 2.0.5).
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
+    // InProcessServerBuilder/InProcessChannelBuilder 전용 — grpc-core에 없고 별도 모듈로 분리되어 있음(실측 확인).
+    testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
+}
+
+// buf 생성 stub(build/generated/buf/java)을 소스셋에 포함 — make proto-gen 으로 생성.
+sourceSets {
+    main { java { srcDir(layout.buildDirectory.dir("generated/buf/java")) } }
 }
 
 tasks.test { useJUnitPlatform() }

@@ -1,0 +1,17 @@
+# 테스트 기본값 — GrpcServerLifecycle은 @Component라 모든 @SpringBootTest 컨텍스트(1a의
+# PageTreePersistenceTest 포함)에 자동으로 뜬다. 기본값 true를 그대로 두면 실 TCP 포트 50052를
+# 바인딩하려 시도해 로컬 bootRun과 충돌하거나 CI 병렬 실행 시 포트 경합이 난다.
+# gRPC 통합테스트(DocServiceGrpcIntegrationTest)는 이 실 서버가 아니라 InProcessServerBuilder를 쓴다.
+#
+# ⚠️ 동명 classpath 리소스(application.yml)는 Spring Boot가 병합하지 않고 test 쪽이 main을
+# 완전히 대체한다 — 그래서 main의 ddl-auto=validate(스키마/매핑 정합 검증)가 이 파일이
+# 생기기 전까지는 살아있었지만, 이 파일 도입 이후 모든 doc-service 테스트에서 조용히
+# 꺼져 있었다(코드리뷰로 발견). 테스트에 실질적인 main 쪽 키는 여기서 명시 복원한다.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+wedocs:
+  doc-service:
+    grpc-enabled: false

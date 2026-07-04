@@ -14,3 +14,8 @@ plugins:
   # grpc-java 1.82.1 런타임 대응
   - remote: buf.build/grpc/java:v1.82.1
     out: ws-gateway/build/generated/buf/java
+  # doc-service — M2 1b: DocService 서버(DocServiceImplBase) 구현에 필요
+  - remote: buf.build/protocolbuffers/java:v34.1
+    out: doc-service/build/generated/buf/java
+  - remote: buf.build/grpc/java:v1.82.1
+    out: doc-service/build/generated/buf/java
