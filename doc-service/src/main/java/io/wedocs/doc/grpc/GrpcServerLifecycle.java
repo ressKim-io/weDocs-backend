@@ -27,7 +27,8 @@ public class GrpcServerLifecycle implements SmartLifecycle {
 
     // I/O 바운드(DB) — CLAUDE.md 언어배정 원칙. application.yml의 spring.threads.virtual.enabled는
     // Tomcat 전용이라 수동 배선하는 이 gRPC 서버엔 자동 적용되지 않는다 — 명시 지정 필요.
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    // enabled=false/시작 실패 시 방치되는 자원이 없도록 start() 안에서만 생성한다.
+    private ExecutorService executor;
 
     private volatile Server server;
 
@@ -48,6 +49,7 @@ public class GrpcServerLifecycle implements SmartLifecycle {
             log.info("doc-service gRPC 서버 비활성화(wedocs.doc-service.grpc-enabled=false)");
             return;
         }
+        executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
             server = ServerBuilder.forPort(port)
                     .executor(executor)
@@ -76,7 +78,9 @@ public class GrpcServerLifecycle implements SmartLifecycle {
                 server.shutdownNow();
             }
         }
-        executor.shutdown();
+        if (executor != null) {
+            executor.shutdown();
+        }
     }
 
     @Override

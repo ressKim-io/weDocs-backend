@@ -1,9 +1,9 @@
 package io.wedocs.doc.service;
 
 import io.wedocs.doc.domain.PageSnapshot;
-import io.wedocs.doc.repository.PageRepository;
 import io.wedocs.doc.repository.PageSnapshotRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,7 +16,6 @@ import java.util.UUID;
 @Transactional
 public class SnapshotService {
 
-    private final PageRepository pages;
     private final PageSnapshotRepository snapshots;
 
     /// 스냅샷 행 부재(신규 페이지) = 에러 아님, 빈 bytes + version 0 (ADR-0013 명문 규정).
@@ -30,11 +29,15 @@ public class SnapshotService {
 
     /// 페이지당 최신 1행 UPSERT(1a에서 검증된 PageSnapshot merge 시맨틱 재사용).
     /// version은 그대로 echo — doc-service는 재할당하지 않는다(엔진 권위).
+    /// 존재 사전확인(exists) 대신 저장을 바로 시도하고 FK 위반을 캐치 — 왕복 1회로 줄이고
+    /// exists→save 사이 TOCTOU(동시 페이지 삭제) 창구를 제거한다. saveAndFlush로 즉시 실행해
+    /// 위반이 이 메서드 안에서(트랜잭션 커밋 시점이 아니라) 동기적으로 드러나게 한다.
     public long save(UUID pageId, byte[] snapshot, long version) {
-        if (!pages.existsById(pageId)) {
+        try {
+            snapshots.saveAndFlush(new PageSnapshot(pageId, snapshot, version));
+        } catch (DataIntegrityViolationException e) {
             throw new PageNotFoundException(pageId);
         }
-        snapshots.save(new PageSnapshot(pageId, snapshot, version));
         return version;
     }
 

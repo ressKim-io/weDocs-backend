@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
 import java.util.UUID;
 
 /// PRD §4.2 유효 권한 해석: 명시 PagePermission > 조상 상속 > workspace baseline > 거부.
@@ -38,9 +37,15 @@ public class PermissionService {
             return EffectivePermission.DENIED; // 존재 여부 비노출 — CheckPermission은 "없음"도 거부와 동일 응답
         }
 
-        Optional<PagePermissionLevel> explicit = findNearestExplicitLevel(page, userId);
-        if (explicit.isPresent()) {
-            return EffectivePermission.granted(toEffectiveRole(explicit.get()));
+        AncestorWalkResult walk = findNearestExplicitLevel(page, userId);
+        if (walk.explicitLevel() != null) {
+            return EffectivePermission.granted(toEffectiveRole(walk.explicitLevel()));
+        }
+        if (walk.depthCapReached()) {
+            // 방어적 상한 도달 = 탐색이 잘려 "이 위에 명시 권한이 있는지 알 수 없는" 상태다.
+            // baseline으로 승격시키면, 캡 위쪽의 명시적 강등(예: viewer 오버라이드)을 놓치고
+            // over-grant할 위험이 있다 — 알 수 없으면 fail-closed로 거부한다(P3).
+            return EffectivePermission.DENIED;
         }
 
         return workspaceMembers.findById_WorkspaceIdAndId_UserId(page.getWorkspaceId(), userId)
@@ -52,23 +57,25 @@ public class PermissionService {
     }
 
     /// 자기 자신 → 부모 → 조상... 순서로 가장 가까운 명시적 PagePermission을 찾는다.
-    /// MAX_ANCESTOR_DEPTH 캡은 정상 경로가 아니라 사이클 등 오염 데이터에서 무한루프를 막는 안전망.
-    private Optional<PagePermissionLevel> findNearestExplicitLevel(Page startPage, UUID userId) {
+    /// 루트에 정상 도달(명시 권한 없음)과 방어적 상한 도달(사이클 등 오염 데이터로 탐색이
+    /// 잘림)은 서로 다른 결과다 — 전자만 baseline 폴백이 안전하다.
+    private AncestorWalkResult findNearestExplicitLevel(Page startPage, UUID userId) {
         Page cursor = startPage;
         for (int hop = 0; cursor != null && hop < MAX_ANCESTOR_DEPTH; hop++) {
-            Optional<PagePermissionLevel> explicit = pagePermissions
+            PagePermissionLevel explicit = pagePermissions
                     .findById_PageIdAndId_UserId(cursor.getId(), userId)
-                    .map(PagePermission::getLevel);
-            if (explicit.isPresent()) {
-                return explicit;
+                    .map(PagePermission::getLevel)
+                    .orElse(null);
+            if (explicit != null) {
+                return AncestorWalkResult.found(explicit);
             }
             UUID parentId = cursor.getParentId();
             if (parentId == null) {
-                return Optional.empty(); // 루트 도달, 명시 권한 없음
+                return AncestorWalkResult.ROOT_REACHED; // 루트 도달(정상 종료), 명시 권한 없음
             }
             cursor = pages.findById(parentId).orElse(null);
         }
-        return Optional.empty(); // 상한 도달 — 오염 데이터 방어적 폴백(워크스페이스 baseline으로)
+        return AncestorWalkResult.DEPTH_CAP_REACHED; // 상한 도달 — 오염 데이터 가능성, 알 수 없음
     }
 
     private static EffectiveRole toEffectiveRole(PagePermissionLevel level) {
@@ -76,5 +83,14 @@ public class PermissionService {
             case VIEWER -> EffectiveRole.VIEWER;
             case EDITOR -> EffectiveRole.EDITOR;
         };
+    }
+
+    private record AncestorWalkResult(PagePermissionLevel explicitLevel, boolean depthCapReached) {
+        static final AncestorWalkResult ROOT_REACHED = new AncestorWalkResult(null, false);
+        static final AncestorWalkResult DEPTH_CAP_REACHED = new AncestorWalkResult(null, true);
+
+        static AncestorWalkResult found(PagePermissionLevel level) {
+            return new AncestorWalkResult(level, false);
+        }
     }
 }

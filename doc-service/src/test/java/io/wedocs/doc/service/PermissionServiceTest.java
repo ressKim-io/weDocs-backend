@@ -213,8 +213,8 @@ class PermissionServiceTest {
 
     @Test
     @Timeout(value = 2, unit = TimeUnit.SECONDS)
-    @DisplayName("조상 체인에 사이클이 있어도(오염 데이터) 무한루프 없이 방어적 상한에서 baseline으로 폴백한다")
-    void resolve_fallsBackToBaseline_whenAncestorChainIsCyclic() {
+    @DisplayName("조상 체인에 사이클이 있어도(오염 데이터) 무한루프 없이 방어적 상한에서 거부한다(fail-closed)")
+    void resolve_denies_whenAncestorChainIsCyclic() {
         // Given: 5개 페이지가 서로를 순환 참조 — 정상 경로에선 불가능(ADR-0012 불변식 위반 오염 데이터 가정).
         //        MAX_ANCESTOR_DEPTH 캡이 없으면 이 호출은 끝나지 않는다.
         UUID workspaceId = UUID.randomUUID();
@@ -226,13 +226,15 @@ class PermissionServiceTest {
             cycle.put(ids[i], new Page(ids[i], workspaceId, parentId, "P" + i, 0, false));
         }
         when(pages.findById(any())).thenAnswer(inv -> Optional.ofNullable(cycle.get(inv.getArgument(0))));
-        when(workspaceMembers.findById_WorkspaceIdAndId_UserId(workspaceId, userId))
-                .thenReturn(Optional.of(new WorkspaceMember(workspaceId, userId, WorkspaceRole.MEMBER)));
+        // workspaceMembers는 의도적으로 stub하지 않는다 — 캡 도달 시 baseline 조회 자체를 하지
+        // 않는 것이 이 테스트가 증명해야 할 동작이라, stub하면 오히려 회귀를 가려버린다.
 
         // When: 테스트가 타임아웃 없이 끝난다는 사실 자체가 캡이 동작한다는 증거.
         EffectivePermission result = service.resolve(ids[0], userId);
 
-        // Then: 상한 도달 후 예외 없이 baseline(D-3 editor)으로 안전 폴백
-        assertThat(result).isEqualTo(EffectivePermission.granted(EffectiveRole.EDITOR));
+        // Then: 상한 도달 시 baseline으로 승격하지 않고 안전하게 거부(fail-closed) — 캡 위쪽의
+        // 명시적 강등(예: viewer 오버라이드)을 놓쳐 over-grant하는 것보다, 알 수 없는 상태를
+        // 거부로 처리하는 편이 권한 시스템에선 안전하다.
+        assertThat(result).isEqualTo(EffectivePermission.DENIED);
     }
 }

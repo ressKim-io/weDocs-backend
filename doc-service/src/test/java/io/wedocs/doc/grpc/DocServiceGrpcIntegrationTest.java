@@ -49,6 +49,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// (test/resources/application.yml의 grpc-enabled=false로 비활성화됨).
 /// PermissionService 알고리즘 자체(상속·우선순위 등)는 PermissionServiceTest가 이미 커버 —
 /// 여기서는 gRPC 경계(UUID 검증·Status 매핑·DB 왕복)만 검증한다.
+/// ⚠️ directExecutor() 필수 — 서버측 RPC 처리가 테스트 스레드 위에서 그대로 실행돼야
+/// @Transactional의 미커밋 데이터(persistRootPageWithOwner 등)를 stub 호출이 같은 트랜잭션
+/// 안에서 볼 수 있다. 실 executor(예: VT executor)로 바꾸면 별도 스레드/트랜잭션이 되어
+/// 데이터가 안 보이고 11개 테스트가 전부 깨진다.
 @SpringBootTest
 @Testcontainers
 @Transactional

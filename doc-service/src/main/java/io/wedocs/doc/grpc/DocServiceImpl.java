@@ -51,12 +51,16 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             return;
         }
 
-        EffectivePermission result = permissionService.resolve(pageId, userId);
-        responseObserver.onNext(CheckPermissionResponse.newBuilder()
-                .setAllowed(result.allowed())
-                .setRole(toProtoRole(result.role()))
-                .build());
-        responseObserver.onCompleted();
+        try {
+            EffectivePermission result = permissionService.resolve(pageId, userId);
+            responseObserver.onNext(CheckPermissionResponse.newBuilder()
+                    .setAllowed(result.allowed())
+                    .setRole(toProtoRole(result.role()))
+                    .build());
+            responseObserver.onCompleted();
+        } catch (RuntimeException e) {
+            failInternal(responseObserver, "CheckPermission", e);
+        }
     }
 
     @Override
@@ -72,6 +76,8 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             responseObserver.onCompleted();
         } catch (PageNotFoundException e) {
             failNotFound(responseObserver, "SaveSnapshot");
+        } catch (RuntimeException e) {
+            failInternal(responseObserver, "SaveSnapshot", e);
         }
     }
 
@@ -82,12 +88,16 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             return;
         }
 
-        SnapshotView view = snapshotService.load(pageId);
-        responseObserver.onNext(LoadSnapshotResponse.newBuilder()
-                .setSnapshot(ByteString.copyFrom(view.snapshot()))
-                .setVersion(view.version())
-                .build());
-        responseObserver.onCompleted();
+        try {
+            SnapshotView view = snapshotService.load(pageId);
+            responseObserver.onNext(LoadSnapshotResponse.newBuilder()
+                    .setSnapshot(ByteString.copyFrom(view.snapshot()))
+                    .setVersion(view.version())
+                    .build());
+            responseObserver.onCompleted();
+        } catch (RuntimeException e) {
+            failInternal(responseObserver, "LoadSnapshot", e);
+        }
     }
 
     @Override

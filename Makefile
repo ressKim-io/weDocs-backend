@@ -1,7 +1,7 @@
 # proto-gen: controller(SSOT)의 proto에서 Java + gRPC stub 생성 (build/ 아래, gitignored).
 # buf.gen.yaml의 inputs(로컬 ../weDocs-controller/proto) 사용. CI/재현은 git remote로 교체(ADR-0010).
 
-.PHONY: proto-gen compile build run run-otel clean
+.PHONY: proto-gen compile test build run run-otel clean
 
 # OTel javaagent: W3C traceparent 자동 전파(가드레일 4). 바이트코드 계측 = JNI 아님(가드레일 3 무관).
 # jar는 커밋 안 함(.gitignore tools/*.jar) — 최초 1회 GitHub releases v2.29.0에서 받음(버전핀).
@@ -11,8 +11,13 @@ OTEL_AGENT_URL := https://github.com/open-telemetry/opentelemetry-java-instrumen
 proto-gen:
 	buf generate
 
+# 서브프로젝트명을 나열하지 않고 루트 태스크로 — 신규 모듈(doc-service 등) 추가 시
+# 이 타깃이 자동으로 커버한다(과거 ws-gateway만 명시해 doc-service가 빠졌던 함정 재발 방지).
 compile: proto-gen
-	./gradlew :ws-gateway:compileJava
+	./gradlew compileJava
+
+test: proto-gen
+	./gradlew test
 
 build: proto-gen
 	./gradlew build
