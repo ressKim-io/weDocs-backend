@@ -48,6 +48,8 @@ dependencies {
     compileOnly("org.apache.tomcat:annotations-api:6.0.53") // grpc 생성 코드의 @Generated
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // Boot 4.x: 테스트 슬라이스도 기술별 스타터로 분리 — @WebMvcTest는 starter-test에 없음(실측).
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     // Testcontainers 2.x: 아티팩트 좌표 변경(testcontainers- 접두사). BOM=spring-boot 4.1.0(tc 2.0.5).
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")

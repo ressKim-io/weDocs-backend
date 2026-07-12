@@ -29,3 +29,9 @@ wedocs:
     grpc-enabled: true   # 테스트 기본값은 false(src/test/resources/application.yml) — 포트 충돌 방지
     # 4MB — crdt-engine tonic 인바운드 한도(기존)와 정합. 런타임 기본값 암묵 의존 금지(secure-coding P2/P5).
     grpc-max-inbound-message-size: 4194304
+    jwt:
+      # RS256 개인키(PKCS#8 PEM) 위치 — prod/K8s는 Secret 파일 마운트(file:/...) 주입 필수(M5, ADR-0017).
+      # 빈 값 = 시작 때 임시 키 생성 + WARN(dev 전용 — 재시작 시 기존 토큰 무효).
+      private-key-location: ${WEDOCS_JWT_PRIVATE_KEY_LOCATION:}
+      ttl: 24h   # ADR-0014: 예상 편집 세션보다 긴 TTL. 만료 = 재로그인(refresh token 비범위)
+      issuer: wedocs-doc-service
