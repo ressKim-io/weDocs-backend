@@ -27,6 +27,13 @@ dependencies {
 
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
+    // REST + JWT 발급 (M2 1c). Boot 4.x 신좌표 사용 — 구좌표(starter-web 등)는 하위호환 alias.
+    // oauth2-resource-server 스타터가 Nimbus JOSE 포함 → RS256 발급(NimbusJwtEncoder)·검증(NimbusJwtDecoder) 겸용(ADR-0017).
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+
     // 스키마 권위 = Flyway. JPA(ddl-auto=validate)는 매핑 검증만.
     // Spring Boot 4.x: auto-config 모듈화 → flyway-core jar만으론 자동구성 안 됨, 전용 스타터 필요.
     implementation("org.springframework.boot:spring-boot-starter-flyway")
