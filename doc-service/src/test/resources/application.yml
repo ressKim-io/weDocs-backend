@@ -11,6 +11,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+  mvc:
+    problemdetails:
+      enabled: true   # main과 동일 — 이 파일이 main을 완전 대체하므로 명시 복원
 
 wedocs:
   doc-service:

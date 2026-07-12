@@ -34,6 +34,12 @@ public class User extends BaseTimeEntity {
     @Column(name = "system_role", nullable = false, length = 16)
     private SystemRole systemRole = SystemRole.USER;
 
+    /// 회원가입 관문 — id 생성과 기본 역할 부여를 한 곳으로(design-patterns P5). passwordHash는
+    /// 반드시 인코딩된 값(경계=AuthService에서 PasswordEncoder 통과 후 진입).
+    public static User register(String email, String passwordHash, String displayName) {
+        return new User(UUID.randomUUID(), email, passwordHash, displayName);
+    }
+
     public User(UUID id, String email, String passwordHash, String displayName) {
         this(id, email, passwordHash, displayName, SystemRole.USER);
     }

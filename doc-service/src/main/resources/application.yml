@@ -9,6 +9,9 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wedocs}
     username: ${SPRING_DATASOURCE_USERNAME:wedocs}
     password: ${SPRING_DATASOURCE_PASSWORD:wedocs}
+  mvc:
+    problemdetails:
+      enabled: true   # 프레임워크 예외(검증 400 등)도 RFC 9457 ProblemDetail로 — 에러 스키마 단일화(error-handling P3)
   flyway:
     enabled: true   # 스키마 권위
   jpa:
