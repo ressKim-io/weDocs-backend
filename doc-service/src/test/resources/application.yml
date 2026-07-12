@@ -18,3 +18,10 @@ spring:
 wedocs:
   doc-service:
     grpc-enabled: false
+    # jwt·cors는 main 키를 명시 미러(이 파일이 main을 대체하므로) — main만 바뀌고 테스트가
+    # stale 기본값으로 조용히 통과하는 drift 방지(config-contract-audit 3곳 동시 갱신).
+    jwt:
+      private-key-location: ""   # 빈 값 = 테스트마다 임시 키 생성(JwtKeys dev 경로)
+      ttl: 24h
+      issuer: wedocs-doc-service
+    cors-allowed-origins: http://localhost:5173

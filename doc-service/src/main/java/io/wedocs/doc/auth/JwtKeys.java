@@ -70,7 +70,10 @@ public class JwtKeys {
             return withThumbprintKid(new RSAKey.Builder(publicKey).privateKey(privateKey).build());
         } catch (IOException | GeneralSecurityException | IllegalArgumentException | ClassCastException e) {
             // 잘못된 키로 조용히 기동하는 것보다 즉시 실패가 안전(fail-fast) — 원인 체인 보존(P4).
-            throw new IllegalStateException("jwt private key load failed: " + location.getDescription(), e);
+            // PKCS#1("BEGIN RSA PRIVATE KEY") 오배포가 흔한 운영 실수라 기대 형식을 메시지에 명시.
+            throw new IllegalStateException(
+                    "jwt private key load failed (expected PKCS#8 PEM: '-----BEGIN PRIVATE KEY-----'): "
+                            + location.getDescription(), e);
         }
     }
 

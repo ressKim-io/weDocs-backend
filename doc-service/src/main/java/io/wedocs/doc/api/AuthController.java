@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/// 무인증 공개 경로(SecurityConfig permitAll) — 요청 수 제한 없음은 의도적 이연:
+/// rate limiting은 M5 인그레스(게이트웨이/메시) 몫, SDD §15 추적(secure-coding P2 [A]).
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/auth")

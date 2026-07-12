@@ -74,7 +74,43 @@ class AuthFlowIntegrationTest {
         // When / Then
         mockMvc.perform(signup(email, "password-5678", "second"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.status").value(409));
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/conflict"));
+    }
+
+    @Test
+    @DisplayName("이메일은 대소문자 무시 — 케이스만 다른 재가입은 409, 다른 케이스 로그인은 성공")
+    void email_isCaseInsensitive() throws Exception {
+        // Given
+        String email = randomEmail();
+        String upperCased = email.toUpperCase();
+        mockMvc.perform(signup(upperCased, "password-1234", "user")).andExpect(status().isCreated());
+
+        // When / Then: 소문자 변형으로 재가입 → 같은 계정으로 인식(409)
+        mockMvc.perform(signup(email, "password-5678", "dup"))
+                .andExpect(status().isConflict());
+
+        // Then: 가입 때와 다른 케이스로 로그인해도 성공
+        mockMvc.perform(login(email, "password-1234"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("한글 비밀번호 — 72바이트 초과는 400(500 아님), 72바이트 이내는 가입·로그인 성공")
+    void multibytePassword_isValidatedInBytes() throws Exception {
+        // Given: 한글 25자 = 75바이트(UTF-8 3바이트/자) — 문자 수 검증(@Size)만으론 통과해 bcrypt에서 터졌던 입력
+        String over72Bytes = "가".repeat(25);
+        // 한글 20자 = 60바이트 — bcrypt 한계 이내
+        String within72Bytes = "한".repeat(20);
+
+        // When / Then: 초과 → 경계 검증 400 (bcrypt 예외 500이 아니라)
+        mockMvc.perform(signup(randomEmail(), over72Bytes, "다국어"))
+                .andExpect(status().isBadRequest());
+
+        // Then: 이내 → 정상 가입·로그인 라운드트립
+        String email = randomEmail();
+        mockMvc.perform(signup(email, within72Bytes, "다국어")).andExpect(status().isCreated());
+        mockMvc.perform(login(email, within72Bytes)).andExpect(status().isOk());
     }
 
     @Test

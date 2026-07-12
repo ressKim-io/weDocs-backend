@@ -38,3 +38,5 @@ wedocs:
       private-key-location: ${WEDOCS_JWT_PRIVATE_KEY_LOCATION:}
       ttl: 24h   # ADR-0014: 예상 편집 세션보다 긴 TTL. 만료 = 재로그인(refresh token 비범위)
       issuer: wedocs-doc-service
+    # CORS 화이트리스트(콤마 구분) — 기본 = vite dev(5173). prod 도메인은 M5에서 env 주입.
+    cors-allowed-origins: ${WEDOCS_CORS_ALLOWED_ORIGINS:http://localhost:5173}
