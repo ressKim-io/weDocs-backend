@@ -10,7 +10,7 @@ public class SystemRoleConverter implements AttributeConverter<SystemRole, Strin
 
     @Override
     public String convertToDatabaseColumn(SystemRole role) {
-        return role == null ? null : role.name().toLowerCase();
+        return role == null ? null : role.wireValue();
     }
 
     @Override
