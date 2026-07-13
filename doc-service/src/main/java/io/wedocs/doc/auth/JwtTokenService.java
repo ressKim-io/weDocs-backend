@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Locale;
 
 /// JWT 발급 (ADR-0014 발급=doc-service · ADR-0017 RS256).
 /// claims 최소화: sub/iss/iat/exp/system_role — email·표시이름 미포함(토큰 PII 최소화).
@@ -33,7 +32,7 @@ public class JwtTokenService {
                 .issuer(properties.issuer())
                 .issuedAt(issuedAt)
                 .expiresAt(issuedAt.plus(properties.ttl()))
-                .claim(CLAIM_SYSTEM_ROLE, user.getSystemRole().name().toLowerCase(Locale.ROOT))
+                .claim(CLAIM_SYSTEM_ROLE, user.getSystemRole().wireValue())
                 .build();
         JwsHeader header = JwsHeader.with(SignatureAlgorithm.RS256).build();
         String token = jwtEncoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
