@@ -5,6 +5,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch: # 전체 히스토리 스캔 수동 검증 — push 스캔은 마지막 커밋만 봐서 드리프트를 못 본다
   schedule:
     - cron: "0 20 * * 0" # 주간 시크릿 드리프트 스캔 (UTC 일 20:00 = KST 월 05:00)
 
