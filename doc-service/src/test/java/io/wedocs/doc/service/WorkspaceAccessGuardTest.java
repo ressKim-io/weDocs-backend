@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.ForbiddenException;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.WorkspaceMember;
 import io.wedocs.doc.domain.WorkspaceRole;
 import io.wedocs.doc.repository.WorkspaceMemberRepository;
@@ -41,7 +44,8 @@ class WorkspaceAccessGuardTest {
 
         // When / Then
         assertThatThrownBy(() -> guard.requireMember(workspaceId, userId))
-                .isInstanceOf(WorkspaceNotFoundException.class);
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.WORKSPACE_NOT_FOUND));
     }
 
     @Test
@@ -78,6 +82,7 @@ class WorkspaceAccessGuardTest {
 
         // When / Then
         assertThatThrownBy(() -> guard.requireOwner(workspaceId, userId))
-                .isInstanceOf(WorkspaceNotFoundException.class);
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.WORKSPACE_NOT_FOUND));
     }
 }

@@ -1,6 +1,8 @@
 package io.wedocs.doc.service;
 
 import io.wedocs.doc.DocFixtures;
+import io.wedocs.doc.common.error.ConflictException;
+import io.wedocs.doc.common.error.DocErrorCode;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.domain.User;
 import io.wedocs.doc.domain.Workspace;
@@ -72,7 +74,8 @@ class PageTreeMoveRaceTest {
 
             // Then: 패자는 사이클 거부로만 실패하고, 최종 그래프는 비순환
             assertThat(failures).allSatisfy(failure ->
-                    assertThat(failure).isInstanceOf(PageCycleException.class));
+                    assertThat(failure).isInstanceOfSatisfying(ConflictException.class,
+                            e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_CYCLE)));
             assertAcyclic(pageA.getId());
             assertAcyclic(pageB.getId());
         }

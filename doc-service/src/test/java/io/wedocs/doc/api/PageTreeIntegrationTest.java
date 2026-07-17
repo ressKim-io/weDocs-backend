@@ -165,12 +165,13 @@ class PageTreeIntegrationTest extends RestTestSupport {
         String pageA = createPage(owner, workspaceId, null, "A");
         String pageB = createPage(owner, workspaceId, pageA, "B");
 
-        // When / Then: A를 자손 B 아래로 → 409
+        // When / Then: A를 자손 B 아래로 → 409 (사이클은 코드 단위 type·code로 세분화)
         mockMvc.perform(jsonPost("/api/pages/" + pageA + "/move",
                         new PageMoveRequest(UUID.fromString(pageB), 0))
                         .header("Authorization", owner.bearerToken()))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/conflict"));
+                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/page-cycle"))
+                .andExpect(jsonPath("$.code").value("page-cycle"));
 
         // Then: 자기 자신 아래로 → 409
         mockMvc.perform(jsonPost("/api/pages/" + pageA + "/move",

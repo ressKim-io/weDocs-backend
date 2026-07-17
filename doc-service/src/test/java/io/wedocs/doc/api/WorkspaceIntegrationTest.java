@@ -121,7 +121,8 @@ class WorkspaceIntegrationTest extends RestTestSupport {
         // When / Then
         invite(owner, workspaceId, invitee.email())
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/conflict"));
+                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/duplicate-member"))
+                .andExpect(jsonPath("$.code").value("duplicate-member"));
     }
 
     @Test

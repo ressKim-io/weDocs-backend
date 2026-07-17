@@ -75,7 +75,8 @@ class AuthFlowIntegrationTest {
         mockMvc.perform(signup(email, "password-5678", "second"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409))
-                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/conflict"));
+                .andExpect(jsonPath("$.type").value("https://wedocs.io/errors/email-already-used"))
+                .andExpect(jsonPath("$.code").value("email-already-used"));
     }
 
     @Test

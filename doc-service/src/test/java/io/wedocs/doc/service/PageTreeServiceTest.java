@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.ConflictException;
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.domain.Workspace;
 import io.wedocs.doc.repository.PageRepository;
@@ -128,7 +131,8 @@ class PageTreeServiceTest {
         Page page = stubPage(UUID.randomUUID(), null);
 
         assertThatThrownBy(() -> service.move(actorId, page.getId(), page.getId(), 0))
-                .isInstanceOf(PageCycleException.class);
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_CYCLE));
     }
 
     @Test
@@ -141,7 +145,8 @@ class PageTreeServiceTest {
 
         // When / Then
         assertThatThrownBy(() -> service.move(actorId, pageA.getId(), pageC.getId(), 0))
-                .isInstanceOf(PageCycleException.class);
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_CYCLE));
     }
 
     @Test
@@ -154,9 +159,10 @@ class PageTreeServiceTest {
         stubPage(yId, xId);
         Page mover = stubPage(UUID.randomUUID(), null);
 
-        // When / Then
+        // When / Then: 상한 도달은 사이클과 구분되는 코드 — fail-closed도 카탈로그로 표현
         assertThatThrownBy(() -> service.move(actorId, mover.getId(), xId, 0))
-                .isInstanceOf(PageCycleException.class);
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_DEPTH_CAP_EXCEEDED));
     }
 
     @Test
@@ -171,7 +177,8 @@ class PageTreeServiceTest {
 
         // When / Then
         assertThatThrownBy(() -> service.move(actorId, page.getId(), foreignParentId, 0))
-                .isInstanceOf(CrossWorkspaceParentException.class);
+                .isInstanceOfSatisfying(ConflictException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.CROSS_WORKSPACE_PARENT));
     }
 
     @Test
@@ -180,10 +187,11 @@ class PageTreeServiceTest {
         // Given
         Page page = stubPage(UUID.randomUUID(), UUID.randomUUID());
         when(workspaceAccess.requireMember(workspaceId, actorId))
-                .thenThrow(new WorkspaceNotFoundException(workspaceId));
+                .thenThrow(new NotFoundException(DocErrorCode.WORKSPACE_NOT_FOUND));
 
         // When / Then
         assertThatThrownBy(() -> service.move(actorId, page.getId(), null, 0))
-                .isInstanceOf(WorkspaceNotFoundException.class);
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.WORKSPACE_NOT_FOUND));
     }
 }

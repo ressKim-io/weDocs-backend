@@ -3,10 +3,11 @@ package io.wedocs.doc.grpc;
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.DomainException;
 import io.wedocs.doc.service.DocMetaService;
 import io.wedocs.doc.service.DocMetaService.DocMetaView;
 import io.wedocs.doc.service.EffectivePermission;
-import io.wedocs.doc.service.PageNotFoundException;
 import io.wedocs.doc.service.PermissionService;
 import io.wedocs.doc.service.SnapshotService;
 import io.wedocs.doc.service.SnapshotService.SnapshotView;
@@ -74,8 +75,8 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             long version = snapshotService.save(pageId, request.getSnapshot().toByteArray(), request.getVersion());
             responseObserver.onNext(SaveSnapshotResponse.newBuilder().setVersion(version).build());
             responseObserver.onCompleted();
-        } catch (PageNotFoundException e) {
-            failNotFound(responseObserver, "SaveSnapshot");
+        } catch (DomainException e) {
+            failDomain(responseObserver, "SaveSnapshot", e);
         } catch (RuntimeException e) {
             failInternal(responseObserver, "SaveSnapshot", e);
         }
@@ -119,11 +120,11 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
                     .setParentId(view.parentId() == null ? "" : view.parentId().toString())
                     .build());
             responseObserver.onCompleted();
-        } catch (PageNotFoundException e) {
-            failNotFound(responseObserver, "GetDocMeta");
+        } catch (DomainException e) {
+            // 미존재(NOT_FOUND) + FK 불변식 위반(INVARIANT_BROKEN→INTERNAL, 정상 경로 도달 불가)
+            // 모두 카탈로그 코드의 gRPC 매핑으로 처리 — 내부 상세는 로그로만, 클라이언트엔 분류만(P4).
+            failDomain(responseObserver, "GetDocMeta", e);
         } catch (RuntimeException e) {
-            // FK 불변식(page.workspace_id → workspaces.id)이 깨진 경우 DocMetaService가 던짐 —
-            // 정상 경로에선 도달 불가하지만, 도달해도 원인이 클라이언트로 새지 않게 방어(P4).
             failInternal(responseObserver, "GetDocMeta", e);
         }
     }
@@ -142,9 +143,18 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
         }
     }
 
-    private static void failNotFound(StreamObserver<?> responseObserver, String rpcName) {
-        log.warn("{}: page not found", rpcName);
-        responseObserver.onError(Status.NOT_FOUND.withDescription("page not found").asRuntimeException());
+    /// 도메인 실패 → gRPC Status 매핑 한 곳(error-handling P1/P7) — 코드·description을 카탈로그에서 읽는다.
+    /// 5xx(불변식)는 내부 상세를 로그로만 남기고 클라이언트엔 고정 "internal error"(P4).
+    private static void failDomain(StreamObserver<?> responseObserver, String rpcName, DomainException e) {
+        DocErrorCode code = e.code();
+        if (code.isInternal()) {
+            log.error("{}: domain invariant broken code={}", rpcName, code.slug(), e);
+            responseObserver.onError(Status.INTERNAL.withDescription("internal error").asRuntimeException());
+            return;
+        }
+        log.warn("{}: {} ({})", rpcName, code.slug(), code.grpc());
+        responseObserver.onError(
+                Status.fromCode(code.grpc()).withDescription(code.message()).asRuntimeException());
     }
 
     private static void failInternal(StreamObserver<?> responseObserver, String rpcName, RuntimeException cause) {

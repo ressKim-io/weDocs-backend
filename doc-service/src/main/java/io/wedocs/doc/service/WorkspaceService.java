@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.ConflictException;
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.User;
 import io.wedocs.doc.domain.Workspace;
 import io.wedocs.doc.domain.WorkspaceMember;
@@ -48,15 +51,15 @@ public class WorkspaceService {
     public WorkspaceMember invite(UUID actorId, UUID workspaceId, String email) {
         workspaceAccess.requireOwner(workspaceId, actorId);
         User target = users.findByEmail(User.normalizeEmail(email))
-                .orElseThrow(UserNotFoundException::new);
+                .orElseThrow(() -> new NotFoundException(DocErrorCode.USER_NOT_FOUND));
         // 친절한 409용 사전 검사 — 동시 초대 레이스의 최종 방어는 아래 복합 PK 제약 캐치(AuthService.signup 패턴).
         if (members.existsById(new WorkspaceMemberId(workspaceId, target.getId()))) {
-            throw new DuplicateMemberException();
+            throw new ConflictException(DocErrorCode.DUPLICATE_MEMBER);
         }
         try {
             return members.saveAndFlush(WorkspaceMember.member(workspaceId, target.getId()));
         } catch (DataIntegrityViolationException e) {
-            throw new DuplicateMemberException(e); // 레이스 패자도 사전 검사와 동일한 409로 수렴
+            throw new ConflictException(DocErrorCode.DUPLICATE_MEMBER, e); // 레이스 패자도 사전 검사와 동일한 409로 수렴
         }
     }
 }
