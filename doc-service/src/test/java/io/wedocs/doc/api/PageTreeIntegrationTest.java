@@ -122,8 +122,8 @@ class PageTreeIntegrationTest extends RestTestSupport {
     }
 
     @Test
-    @DisplayName("제목 변경 — editor(멤버 기본, D-3) 200")
-    void rename_byEditor() throws Exception {
+    @DisplayName("제목 변경 — owner 200 (member 액터의 D-3 검증은 memberActor_canCreateAndRename)")
+    void rename_byOwner() throws Exception {
         // Given
         AuthedUser owner = signupAndLogin("owner");
         String workspaceId = createWorkspace(owner);

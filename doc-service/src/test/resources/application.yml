@@ -13,7 +13,7 @@ spring:
       # main 키 명시 미러(이 파일이 main을 완전 대체) — init SQL 오타가 테스트에서 잡히게 하고,
       # 락 타임아웃 동작(무제한 대기 차단)이 테스트·런타임에서 동일하도록 유지.
       maximum-pool-size: 10
-      connection-init-sql: SET lock_timeout = '3s'
+      connection-init-sql: SET lock_timeout = '${WEDOCS_DB_LOCK_TIMEOUT:3s}'
   jpa:
     hibernate:
       ddl-auto: validate

@@ -15,7 +15,9 @@ spring:
       maximum-pool-size: 10
       # 비관 락(move 직렬화) 대기 상한 — 무제한 대기가 풀 고갈로 번지는 것 차단(1c 게이트 MED-7).
       # 세션 GUC라 모든 문장에 적용되지만, 직렬화된 move는 ms 단위라 정상 경합을 자르지 않는다.
-      connection-init-sql: SET lock_timeout = '3s'
+      # ⚠️ Flyway도 같은 풀을 공유 — 트래픽 중 대형 DDL(ACCESS EXCLUSIVE) 마이그레이션은
+      # 3s 내 락 실패 가능. 마이그레이션 창 설계 시 이 값 인지 필요(M3+).
+      connection-init-sql: SET lock_timeout = '${WEDOCS_DB_LOCK_TIMEOUT:3s}'
   mvc:
     problemdetails:
       enabled: true   # 프레임워크 예외(검증 400 등)도 RFC 9457 ProblemDetail로 — 에러 스키마 단일화(error-handling P3)
