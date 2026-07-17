@@ -2,6 +2,7 @@ package io.wedocs.doc.api;
 
 import io.wedocs.doc.service.ConflictException;
 import io.wedocs.doc.service.DomainException;
+import io.wedocs.doc.service.ForbiddenException;
 import io.wedocs.doc.service.InvalidCredentialsException;
 import io.wedocs.doc.service.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
@@ -35,6 +36,11 @@ class GlobalExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException.class)
     ProblemDetail handleInvalidCredentials(InvalidCredentialsException e) {
         return problem(HttpStatus.UNAUTHORIZED, "invalid-credentials", e);
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    ProblemDetail handleForbidden(ForbiddenException e) {
+        return problem(HttpStatus.FORBIDDEN, "forbidden", e);
     }
 
     /// 매핑 없이 추가된 신규 DomainException 서브타입의 안전망 — 500이되 에러 스키마는 유지.

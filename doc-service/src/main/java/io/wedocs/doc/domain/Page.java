@@ -46,8 +46,27 @@ public class Page extends BaseTimeEntity {
         this.archived = archived;
     }
 
+    /// 생성 관문(User.register와 동일 규약) — id 생성·기본 position/archived를 한 곳으로.
+    /// parentId 유효성(존재·동일 워크스페이스·권한)은 서비스 계층(PageTreeService) 책임.
+    public static Page create(UUID workspaceId, UUID parentId, String title) {
+        return new Page(UUID.randomUUID(), workspaceId, parentId, title, 0, false);
+    }
+
     /// 제목 변경 = 편집 → updated_at 갱신(Auditing). 트리 이동(reparent)은 사이클 검사가 필요해 1b 서비스 계층.
     public void rename(String title) {
         this.title = title;
+    }
+
+    /// reparent + 형제 내 순서. 사이클 검사·동일 워크스페이스 강제·직렬화(워크스페이스 락)를
+    /// 통과한 뒤에만 호출된다 — 불변식 검증은 PageTreeService.move가 소유(ADR-0012).
+    public void moveTo(UUID parentId, int position) {
+        this.parentId = parentId;
+        this.position = position;
+    }
+
+    /// 가역 숨김(D-4) — 트리에서 숨기되 스냅샷은 보존. 영구삭제는 비범위(owner 전용, 후속).
+    /// 하위 트리는 루트로부터의 도달성으로 함께 숨겨진다(자식 행은 건드리지 않음 — 복원 시 그대로 복귀).
+    public void archive() {
+        this.archived = true;
     }
 }
