@@ -9,6 +9,13 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wedocs}
     username: ${SPRING_DATASOURCE_USERNAME:wedocs}
     password: ${SPRING_DATASOURCE_PASSWORD:wedocs}
+    hikari:
+      # 풀 크기 기본값(10) 암묵 의존 금지(config-contract-audit) — VT 대량 동시 요청에서도 DB
+      # 커넥션 상한은 이 값. 정량 재조정은 M3 부하검증(SDD §15)에서.
+      maximum-pool-size: 10
+      # 비관 락(move 직렬화) 대기 상한 — 무제한 대기가 풀 고갈로 번지는 것 차단(1c 게이트 MED-7).
+      # 세션 GUC라 모든 문장에 적용되지만, 직렬화된 move는 ms 단위라 정상 경합을 자르지 않는다.
+      connection-init-sql: SET lock_timeout = '3s'
   mvc:
     problemdetails:
       enabled: true   # 프레임워크 예외(검증 400 등)도 RFC 9457 ProblemDetail로 — 에러 스키마 단일화(error-handling P3)
