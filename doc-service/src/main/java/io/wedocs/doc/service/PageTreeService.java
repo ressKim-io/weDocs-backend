@@ -33,9 +33,6 @@ public class PageTreeService {
     /// 넉넉히 초과. 초과분은 잘린다 — 페이지네이션은 규모가 실제로 커질 때(후속).
     static final int MAX_PAGE_LIST = 1_000;
 
-    /// 사이클 검사 탐색의 방어적 상한 — 권한 해석과 공유(단일 선언은 PermissionService 소유).
-    static final int MAX_ANCESTOR_DEPTH = PermissionService.MAX_ANCESTOR_DEPTH;
-
     private final PageRepository pages;
     private final WorkspaceRepository workspaces;
     private final PageAccessGuard pageAccess;
@@ -159,7 +156,7 @@ public class PageTreeService {
     /// 상한 도달 = 사이클 여부를 확인할 수 없는 상태 → fail-closed 거부(PermissionService와 동일 원칙).
     private void assertNoCycle(UUID movingPageId, Page newParent) {
         Page cursor = newParent;
-        for (int hop = 0; hop < MAX_ANCESTOR_DEPTH; hop++) {
+        for (int hop = 0; hop < Page.MAX_ANCESTOR_DEPTH; hop++) {
             if (cursor.getId().equals(movingPageId)) {
                 throw new ConflictException(DocErrorCode.PAGE_CYCLE);
             }

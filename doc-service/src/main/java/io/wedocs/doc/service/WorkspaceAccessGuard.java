@@ -13,6 +13,7 @@ import java.util.UUID;
 
 /// REST 워크스페이스 인가 관문 — 비멤버는 미존재 워크스페이스와 같은 404로 붕괴(존재 비노출, P3),
 /// 멤버인데 owner 권한이 필요하면 403(멤버는 존재를 이미 안다).
+/// 호출자가 404 코드를 지정하는 3-arg requireOwner는 다른 feature(예: 페이지 공유 관리)의 존재 비노출에도 재사용된다.
 @RequiredArgsConstructor
 @Component
 public class WorkspaceAccessGuard {
