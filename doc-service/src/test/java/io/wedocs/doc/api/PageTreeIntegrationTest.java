@@ -3,7 +3,6 @@ package io.wedocs.doc.api;
 import io.wedocs.doc.api.dto.PageCreateRequest;
 import io.wedocs.doc.api.dto.PageMoveRequest;
 import io.wedocs.doc.api.dto.PageRenameRequest;
-import io.wedocs.doc.api.dto.WorkspaceCreateRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -216,6 +215,88 @@ class PageTreeIntegrationTest extends RestTestSupport {
     }
 
     @Test
+    @DisplayName("아카이브 부모의 자손은 목록에서 함께 숨김 — 도달성 판정(단일 행 flag, D-4)")
+    void listPages_hidesDescendantsOfArchivedParent() throws Exception {
+        // Given: 부모 → 자식 → 손자 체인 + 무관한 형제 루트
+        AuthedUser owner = signupAndLogin("owner");
+        String workspaceId = createWorkspace(owner);
+        String parentId = createPage(owner, workspaceId, null, "부모");
+        String childId = createPage(owner, workspaceId, parentId, "자식");
+        String grandChildId = createPage(owner, workspaceId, childId, "손자");
+        String siblingId = createPage(owner, workspaceId, null, "형제 루트");
+
+        // When: 부모만 아카이브(자손 행은 건드리지 않는다)
+        mockMvc.perform(delete("/api/pages/" + parentId).header("Authorization", owner.bearerToken()))
+                .andExpect(status().isNoContent());
+
+        // Then: 자손 전체가 도달성으로 함께 숨겨지고, 무관한 루트는 남는다
+        mockMvc.perform(get("/api/workspaces/" + workspaceId + "/pages")
+                        .header("Authorization", owner.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == '%s')]", siblingId).exists())
+                .andExpect(jsonPath("$[?(@.id == '%s')]", parentId).doesNotExist())
+                .andExpect(jsonPath("$[?(@.id == '%s')]", childId).doesNotExist())
+                .andExpect(jsonPath("$[?(@.id == '%s')]", grandChildId).doesNotExist());
+
+        // Then: 자손 행 자체는 archived=false 그대로 — 부모 복원만으로 서브트리 통째 복귀(D-4)
+        mockMvc.perform(get("/api/pages/" + childId).header("Authorization", owner.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.archived").value(false));
+    }
+
+    @Test
+    @DisplayName("member 액터 종단 — 초대된 member가 루트 생성·타인 페이지 이름변경 가능(D-3 baseline=editor)")
+    void memberActor_canCreateAndRename() throws Exception {
+        // Given: owner의 워크스페이스에 member 초대, owner가 만든 페이지 존재
+        AuthedUser owner = signupAndLogin("owner");
+        AuthedUser member = signupAndLogin("member");
+        String workspaceId = createWorkspace(owner);
+        invite(owner, workspaceId, member.email()).andExpect(status().isCreated());
+        String pageId = createPage(owner, workspaceId, null, "owner 문서");
+
+        // When: member가 루트 페이지 생성(멤버십) — createPage 내부에서 201 단언
+        createPage(member, workspaceId, null, "member 문서");
+
+        // Then: member가 owner 문서 이름변경(멤버 기본 레벨 = editor, PRD §4.1 D-3)
+        mockMvc.perform(patch("/api/pages/" + pageId)
+                        .header("Authorization", member.bearerToken())
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(new PageRenameRequest("member 편집"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("member 편집"));
+    }
+
+    @Test
+    @DisplayName("무토큰 접근 — 페이지 엔드포인트 전부 401(기본 거부, 엔드포인트별 검증)")
+    void withoutToken_allPageEndpoints_unauthorized() throws Exception {
+        String pageId = UUID.randomUUID().toString();
+
+        mockMvc.perform(get("/api/workspaces/" + UUID.randomUUID() + "/pages"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(jsonPost("/api/pages", new PageCreateRequest(UUID.randomUUID(), null, "티")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/pages/" + pageId))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(patch("/api/pages/" + pageId)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(new PageRenameRequest("티"))))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(jsonPost("/api/pages/" + pageId + "/move", new PageMoveRequest(null, 0)))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/api/pages/" + pageId))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("경로 UUID 형식 오류는 400 — 바인딩 실패가 500으로 새지 않는다")
+    void malformedUuidPath_badRequest() throws Exception {
+        AuthedUser owner = signupAndLogin("owner");
+
+        mockMvc.perform(get("/api/pages/not-a-uuid").header("Authorization", owner.bearerToken()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("입력 검증 — title 누락·position 음수는 400")
     void invalidInput_badRequest() throws Exception {
         // Given
@@ -235,22 +316,4 @@ class PageTreeIntegrationTest extends RestTestSupport {
                 .andExpect(status().isBadRequest());
     }
 
-    private String createWorkspace(AuthedUser actor) throws Exception {
-        return readBody(mockMvc.perform(
-                        jsonPost("/api/workspaces", new WorkspaceCreateRequest("ws-" + UUID.randomUUID()))
-                                .header("Authorization", actor.bearerToken()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-    }
-
-    private String createPage(AuthedUser actor, String workspaceId, String parentId, String title) throws Exception {
-        PageCreateRequest request = new PageCreateRequest(
-                UUID.fromString(workspaceId),
-                parentId == null ? null : UUID.fromString(parentId),
-                title);
-        return readBody(mockMvc.perform(jsonPost("/api/pages", request)
-                        .header("Authorization", actor.bearerToken()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-    }
 }

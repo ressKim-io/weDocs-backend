@@ -50,11 +50,14 @@ class WorkspaceIntegrationTest extends RestTestSupport {
     }
 
     @Test
-    @DisplayName("무토큰 접근은 401 — 기본 거부")
+    @DisplayName("무토큰 접근은 401 — 기본 거부(워크스페이스 엔드포인트별 검증)")
     void withoutToken_unauthorized() throws Exception {
         mockMvc.perform(jsonPost("/api/workspaces", new WorkspaceCreateRequest("훔친 위키")))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/workspaces"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(jsonPost("/api/workspaces/" + UUID.randomUUID() + "/members",
+                        new MemberInviteRequest("ghost@test.io")))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -166,17 +169,4 @@ class WorkspaceIntegrationTest extends RestTestSupport {
                 .andExpect(status().isNotFound());
     }
 
-    private String createWorkspace(AuthedUser actor, String name) throws Exception {
-        return readBody(mockMvc.perform(jsonPost("/api/workspaces", new WorkspaceCreateRequest(name))
-                        .header("Authorization", actor.bearerToken()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-    }
-
-    private org.springframework.test.web.servlet.ResultActions invite(
-            AuthedUser actor, String workspaceId, String email) throws Exception {
-        return mockMvc.perform(jsonPost("/api/workspaces/" + workspaceId + "/members",
-                new MemberInviteRequest(email))
-                .header("Authorization", actor.bearerToken()));
-    }
 }

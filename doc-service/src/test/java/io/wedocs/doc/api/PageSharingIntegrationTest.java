@@ -1,17 +1,15 @@
 package io.wedocs.doc.api;
 
-import io.wedocs.doc.api.dto.MemberInviteRequest;
-import io.wedocs.doc.api.dto.PageCreateRequest;
 import io.wedocs.doc.api.dto.PageMoveRequest;
 import io.wedocs.doc.api.dto.PagePermissionRequest;
 import io.wedocs.doc.api.dto.PageRenameRequest;
-import io.wedocs.doc.api.dto.WorkspaceCreateRequest;
 import io.wedocs.doc.domain.PagePermissionLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -23,6 +21,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -141,10 +140,7 @@ class PageSharingIntegrationTest extends RestTestSupport {
         AuthedUser target = signupAndLogin("target");
         String workspaceId = createWorkspace(owner);
         String pageId = createPage(owner, workspaceId, null, "관리 대상");
-        mockMvc.perform(jsonPost("/api/workspaces/" + workspaceId + "/members",
-                        new MemberInviteRequest(member.email()))
-                        .header("Authorization", owner.bearerToken()))
-                .andExpect(status().isCreated());
+        invite(owner, workspaceId, member.email()).andExpect(status().isCreated());
         grant(owner, pageId, sharedGuest.id(), PagePermissionLevel.EDITOR).andExpect(status().isNoContent());
 
         // When / Then: member(editor baseline)도 공유 관리는 403(PRD §4.3)
@@ -158,16 +154,68 @@ class PageSharingIntegrationTest extends RestTestSupport {
     }
 
     @Test
-    @DisplayName("미존재 대상 사용자 공유는 404")
+    @DisplayName("미존재 대상 사용자 공유는 404 — 본문은 ProblemDetail 스키마")
     void share_toUnknownUser_notFound() throws Exception {
         // Given
         AuthedUser owner = signupAndLogin("owner");
         String workspaceId = createWorkspace(owner);
         String pageId = createPage(owner, workspaceId, null, "문서");
 
-        // When / Then
+        // When / Then: status 중심 단언 — type/detail 문구는 에러 카탈로그 도입(후속 PR)이 재정의
         grant(owner, pageId, UUID.randomUUID(), PagePermissionLevel.VIEWER)
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    @DisplayName("공유받은 비멤버 editor는 공유 페이지 아래 자식 생성 가능 — 트리 내부는 parent ≥editor 몫")
+    void sharedEditor_canCreateChildUnderSharedPage() throws Exception {
+        // Given: 비멤버 guest에게 부모 페이지 editor 공유
+        AuthedUser owner = signupAndLogin("owner");
+        AuthedUser guest = signupAndLogin("guest");
+        String workspaceId = createWorkspace(owner);
+        String parentId = createPage(owner, workspaceId, null, "공유 부모");
+        grant(owner, parentId, guest.id(), PagePermissionLevel.EDITOR).andExpect(status().isNoContent());
+
+        // When: guest(비멤버)가 공유 부모 아래 자식 생성 — createPage 내부에서 201 단언
+        String childId = createPage(guest, workspaceId, parentId, "게스트 자식");
+
+        // Then: 생성된 자식이 부모 아래에 있고 guest가 읽을 수 있다(상속)
+        mockMvc.perform(get("/api/pages/" + childId).header("Authorization", guest.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentId").value(parentId));
+    }
+
+    @Test
+    @DisplayName("공유 level enum 오타는 400 — 바인딩 실패가 500으로 새지 않는다")
+    void invalidPermissionLevel_badRequest() throws Exception {
+        // Given
+        AuthedUser owner = signupAndLogin("owner");
+        String workspaceId = createWorkspace(owner);
+        String pageId = createPage(owner, workspaceId, null, "문서");
+
+        // When / Then
+        mockMvc.perform(put("/api/pages/" + pageId + "/permissions/" + owner.id())
+                        .header("Authorization", owner.bearerToken())
+                        .contentType("application/json")
+                        .content("{\"level\":\"SUPERUSER\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("무토큰 공유 관리 — PUT/DELETE 모두 401(기본 거부)")
+    void withoutToken_sharingEndpoints_unauthorized() throws Exception {
+        String pageId = UUID.randomUUID().toString();
+        UUID targetId = UUID.randomUUID();
+
+        mockMvc.perform(put("/api/pages/" + pageId + "/permissions/" + targetId)
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(
+                                new PagePermissionRequest(PagePermissionLevel.VIEWER))))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/api/pages/" + pageId + "/permissions/" + targetId))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -208,22 +256,4 @@ class PageSharingIntegrationTest extends RestTestSupport {
                 .content(objectMapper.writeValueAsString(new PageRenameRequest(title))));
     }
 
-    private String createWorkspace(AuthedUser actor) throws Exception {
-        return readBody(mockMvc.perform(
-                        jsonPost("/api/workspaces", new WorkspaceCreateRequest("ws-" + UUID.randomUUID()))
-                                .header("Authorization", actor.bearerToken()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-    }
-
-    private String createPage(AuthedUser actor, String workspaceId, String parentId, String title) throws Exception {
-        PageCreateRequest request = new PageCreateRequest(
-                UUID.fromString(workspaceId),
-                parentId == null ? null : UUID.fromString(parentId),
-                title);
-        return readBody(mockMvc.perform(jsonPost("/api/pages", request)
-                        .header("Authorization", actor.bearerToken()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString()).get("id").asString();
-    }
 }
