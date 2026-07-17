@@ -1,0 +1,36 @@
+# gitleaks 오탐 억제 — 표준: controller `.claude/rules/secure-coding.md`
+# plan: weDocs-controller `docs/plans/2026-07-17-gitleaks-false-positive-baseline.md`
+#
+# 원칙:
+#  1. fingerprint(`.gitleaksignore`) 금지 — `<commit>:<path>:<rule>:<line>` 구조라
+#     squash 머지가 SHA를 재작성하면 즉시 무효화된다.
+#     실증: PR #7이 브랜치 커밋(eadaf38)에 핀 → squash로 main이 a7e3a27이 되며 엔트리 사망
+#     → PR green / main red(= 게이트 false pass). 그래서 이 파일이 `.gitleaksignore`를 대체한다.
+#  2. 경로 통째 허용(blanket) 금지 — `condition="AND"`로 경로 + 모양까지 좁힌다.
+#     JwtKeys.java는 오히려 진짜 키가 붙을 위험이 가장 큰 파일이므로 blanket은 금물.
+#  3. 신규 엔트리는 "왜 오탐인가"를 1줄로 남긴다. 억제는 리뷰 대상이다.
+#
+# 검증(gitleaks 8.24.3 = CI의 gitleaks-action@v3가 해소하는 버전):
+#   gitleaks detect --redact -v --exit-code=2
+
+[extend]
+useDefault = true
+
+# `targetRules`(8.25.0 신설)는 CI 버전(8.24.3)에 없다 → 룰 재선언으로 스코프.
+# 미지정 속성(regex/keywords)은 기본 룰에서 상속된다(실측 확인).
+[[rules]]
+id = "private-key"
+
+[[rules.allowlists]]
+description = "PKCS#8 PEM 마커 문자열 리터럴(파서·테스트 더미) — 키 자료 아님"
+condition = "AND"
+paths = ['''doc-service/src/(main|test)/java/io/wedocs/doc/auth/JwtKeys(Test)?\.java$''']
+# private-key 룰은 `BEGIN…PRIVATE KEY-----` + 64자 이상 + `KEY-----` 구조다.
+# JwtKeys.java는 파서가 BEGIN/END 마커를 각각 `.replace(...)`로 지우고,
+# JwtKeysTest.java는 fail-fast 더미("not-a-key")를 쓴다 → 마커 2개가 64자 이상 떨어져
+# 그 사이의 **Java 소스 코드**가 통째로 "키 본문"으로 잡힌다.
+#
+# 판별식: 마커 직후 80자 안에 `"`(자바 문자열 리터럴 경계)가 나오면 소스 코드다.
+# 실제 PEM 본문은 개행 뒤 순수 base64라 그 위치에 `"`가 올 수 없다
+# → 이 파일에 진짜 키가 들어와도 그대로 발화한다(대조군으로 실측 확인).
+regexes = ['''-----BEGIN [A-Z ]*PRIVATE KEY-----[^\n]{0,80}"''']

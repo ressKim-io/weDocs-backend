@@ -1,3 +1,0 @@
-# JwtKeysTest.java:61 — PEM 파싱 실패(fail-fast) 테스트용 더미 문자열("not-a-key").
-# 실제 키 자료 없음. gitleaks private-key 룰이 BEGIN/END PRIVATE KEY 마커만 보고 오탐.
-eadaf3830f30b9885b049862f2f1f3c631f69dd5:doc-service/src/test/java/io/wedocs/doc/auth/JwtKeysTest.java:private-key:61
