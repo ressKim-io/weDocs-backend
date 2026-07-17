@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 public enum DocErrorCode {
     PAGE_NOT_FOUND(Category.NOT_FOUND, "page-not-found", "page not found", Status.Code.NOT_FOUND),
     WORKSPACE_NOT_FOUND(Category.NOT_FOUND, "workspace-not-found", "workspace not found", Status.Code.NOT_FOUND),
+    // 초대·공유 응답으로 가입 여부를 열거하는 채널 방지 — 메시지에 email/id 금지(EMAIL_ALREADY_USED와 동일 PII 규약, P4).
     USER_NOT_FOUND(Category.NOT_FOUND, "user-not-found", "user not found", Status.Code.NOT_FOUND),
     EMAIL_ALREADY_USED(Category.CONFLICT, "email-already-used", "email already in use", Status.Code.ALREADY_EXISTS),
     DUPLICATE_MEMBER(Category.CONFLICT, "duplicate-member", "already a workspace member", Status.Code.ALREADY_EXISTS),
@@ -54,6 +55,13 @@ public enum DocErrorCode {
 
     public Status.Code grpc() {
         return grpc;
+    }
+
+    /// "내부 상세를 숨겨야 하는 불투명 서버 에러인가" — HTTP·gRPC 핸들러가 각자 5xx/INTERNAL을
+    /// 재계산하지 않고 이 한 판정을 공유한다(카테고리가 SSOT). DocErrorCodeTest가 http 5xx·grpc
+    /// INTERNAL과의 동치를 전 엔트리에 강제해 카탈로그 확장 시 두 채널의 드리프트를 막는다.
+    public boolean isInternal() {
+        return category == Category.INVARIANT;
     }
 
     /// 카테고리 = 도메인 예외 타입 ↔ HTTP 상태의 1:1 대응. 카테고리 예외 생성자가 이 값으로

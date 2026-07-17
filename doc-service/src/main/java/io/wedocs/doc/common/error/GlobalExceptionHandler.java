@@ -20,7 +20,8 @@ class GlobalExceptionHandler {
     @ExceptionHandler(DomainException.class)
     ProblemDetail handle(DomainException e) {
         DocErrorCode code = e.code();
-        if (code.http().is5xxServerError()) {
+        if (code.isInternal()) {
+            // 불투명 에러: 카탈로그 문구조차 신뢰하지 않고 고정 리터럴로 — 내부 상세(e.getMessage())는 로그로만(P4).
             log.error("domain invariant broken: code={}", code.slug(), e);
             return problem(code, "unexpected error");
         }

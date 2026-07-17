@@ -7,10 +7,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// 에러 카탈로그 불변식(ADR-0018) — 엔트리별 slug·HTTP·gRPC 매핑과 카테고리 정합의 전수 검증.
 /// 새 엔트리를 추가하면 여기서 형식·유일성이 강제된다(카탈로그가 계약이므로 테스트도 계약).
@@ -53,36 +56,51 @@ class DocErrorCodeTest {
     }
 
     @Test
-    @DisplayName("gRPC 코드 매핑 (ADR-0018 매핑표) — 충돌=ALREADY_EXISTS, 상태전제=FAILED_PRECONDITION")
+    @DisplayName("gRPC 코드 매핑 전수 (ADR-0018 매핑표) — 충돌=ALREADY_EXISTS, 상태전제=FAILED_PRECONDITION")
     void grpcCodeMapping() {
-        assertThat(DocErrorCode.PAGE_NOT_FOUND.grpc()).isEqualTo(Status.Code.NOT_FOUND);
-        assertThat(DocErrorCode.EMAIL_ALREADY_USED.grpc()).isEqualTo(Status.Code.ALREADY_EXISTS);
-        assertThat(DocErrorCode.DUPLICATE_MEMBER.grpc()).isEqualTo(Status.Code.ALREADY_EXISTS);
-        assertThat(DocErrorCode.PAGE_CYCLE.grpc()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-        assertThat(DocErrorCode.CROSS_WORKSPACE_PARENT.grpc()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-        assertThat(DocErrorCode.INSUFFICIENT_PERMISSION.grpc()).isEqualTo(Status.Code.PERMISSION_DENIED);
-        assertThat(DocErrorCode.INVALID_CREDENTIALS.grpc()).isEqualTo(Status.Code.UNAUTHENTICATED);
-        assertThat(DocErrorCode.INVARIANT_BROKEN.grpc()).isEqualTo(Status.Code.INTERNAL);
+        Map<DocErrorCode, Status.Code> expected = new EnumMap<>(DocErrorCode.class);
+        expected.put(DocErrorCode.PAGE_NOT_FOUND, Status.Code.NOT_FOUND);
+        expected.put(DocErrorCode.WORKSPACE_NOT_FOUND, Status.Code.NOT_FOUND);
+        expected.put(DocErrorCode.USER_NOT_FOUND, Status.Code.NOT_FOUND);
+        expected.put(DocErrorCode.EMAIL_ALREADY_USED, Status.Code.ALREADY_EXISTS);
+        expected.put(DocErrorCode.DUPLICATE_MEMBER, Status.Code.ALREADY_EXISTS);
+        expected.put(DocErrorCode.PAGE_CYCLE, Status.Code.FAILED_PRECONDITION);
+        expected.put(DocErrorCode.PAGE_DEPTH_CAP_EXCEEDED, Status.Code.FAILED_PRECONDITION);
+        expected.put(DocErrorCode.CROSS_WORKSPACE_PARENT, Status.Code.FAILED_PRECONDITION);
+        expected.put(DocErrorCode.INSUFFICIENT_PERMISSION, Status.Code.PERMISSION_DENIED);
+        expected.put(DocErrorCode.INVALID_CREDENTIALS, Status.Code.UNAUTHENTICATED);
+        expected.put(DocErrorCode.INVARIANT_BROKEN, Status.Code.INTERNAL);
+
+        // 기대표가 전 엔트리를 덮는지 먼저 강제 — 새 코드 추가 시 여기 누락되면 실패
+        assertThat(expected.keySet()).containsExactlyInAnyOrder(DocErrorCode.values());
+        expected.forEach((code, grpc) -> assertThat(code.grpc()).as(code.name()).isEqualTo(grpc));
+    }
+
+    @ParameterizedTest
+    @EnumSource(DocErrorCode.class)
+    @DisplayName("불투명 판정 3채널 동치 — isInternal ⟺ HTTP 5xx ⟺ gRPC INTERNAL (채널 드리프트 방지)")
+    void internalFlagIsConsistentAcrossChannels(DocErrorCode code) {
+        assertThat(code.isInternal())
+                .isEqualTo(code.http().is5xxServerError())
+                .isEqualTo(code.grpc() == Status.Code.INTERNAL);
     }
 
     @Test
-    @DisplayName("불변식 코드만 5xx — 그 외 도메인 실패는 4xx(클라이언트 정정 가능)")
-    void onlyInvariantIs5xx() {
-        String fiveXx = Arrays.stream(DocErrorCode.values())
-                .filter(c -> c.http().is5xxServerError())
+    @DisplayName("불변식 코드만 내부 에러 — 그 외 도메인 실패는 4xx(클라이언트 정정 가능)")
+    void onlyInvariantIsInternal() {
+        String internal = Arrays.stream(DocErrorCode.values())
+                .filter(DocErrorCode::isInternal)
                 .map(Enum::name)
                 .collect(Collectors.joining(","));
-        assertThat(fiveXx).isEqualTo("INVARIANT_BROKEN");
+        assertThat(internal).isEqualTo("INVARIANT_BROKEN");
     }
 
     @Test
     @DisplayName("카테고리 예외는 잘못된 카테고리의 코드를 거부 (illegal state 방지)")
     void categoryException_rejectsMismatchedCode() {
-        org.assertj.core.api.Assertions
-                .assertThatThrownBy(() -> new NotFoundException(DocErrorCode.PAGE_CYCLE))
+        assertThatThrownBy(() -> new NotFoundException(DocErrorCode.PAGE_CYCLE))
                 .isInstanceOf(IllegalArgumentException.class);
-        org.assertj.core.api.Assertions
-                .assertThatThrownBy(() -> new ConflictException(DocErrorCode.PAGE_NOT_FOUND))
+        assertThatThrownBy(() -> new ConflictException(DocErrorCode.PAGE_NOT_FOUND))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

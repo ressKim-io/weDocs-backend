@@ -3,7 +3,9 @@ package io.wedocs.doc.common.error;
 /// 도메인 실패의 공통 상위 타입 (error-handling P2·P7). 실패 종류는 카테고리 서브타입 + ErrorCode로 표현한다 —
 /// 호출자·핸들러는 카테고리 타입으로 매칭하고, 상태·문구는 code()의 필드에서 읽는다.
 /// HTTP 매핑은 GlobalExceptionHandler 한 곳(P1), gRPC 매핑은 DocServiceImpl 경계 한 곳.
-public abstract class DomainException extends RuntimeException {
+/// sealed로 카테고리 5종만 허용 — require() 검증을 우회하는 6번째 서브타입 신설을 컴파일러가 막는다(design-patterns P4).
+public abstract sealed class DomainException extends RuntimeException
+        permits NotFoundException, ConflictException, ForbiddenException, UnauthorizedException, InvariantViolationException {
 
     private final DocErrorCode code;
 

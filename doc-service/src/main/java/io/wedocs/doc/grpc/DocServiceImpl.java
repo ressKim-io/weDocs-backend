@@ -122,7 +122,7 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             responseObserver.onCompleted();
         } catch (DomainException e) {
             // 미존재(NOT_FOUND) + FK 불변식 위반(INVARIANT_BROKEN→INTERNAL, 정상 경로 도달 불가)
-            // 모두 카탈로그 코드의 gRPC 매핑으로 처리 — 내부 상세는 로그로만, 클라엔 분류만(P4).
+            // 모두 카탈로그 코드의 gRPC 매핑으로 처리 — 내부 상세는 로그로만, 클라이언트엔 분류만(P4).
             failDomain(responseObserver, "GetDocMeta", e);
         } catch (RuntimeException e) {
             failInternal(responseObserver, "GetDocMeta", e);
@@ -147,7 +147,7 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
     /// 5xx(불변식)는 내부 상세를 로그로만 남기고 클라이언트엔 고정 "internal error"(P4).
     private static void failDomain(StreamObserver<?> responseObserver, String rpcName, DomainException e) {
         DocErrorCode code = e.code();
-        if (code.grpc() == Status.Code.INTERNAL) {
+        if (code.isInternal()) {
             log.error("{}: domain invariant broken code={}", rpcName, code.slug(), e);
             responseObserver.onError(Status.INTERNAL.withDescription("internal error").asRuntimeException());
             return;
