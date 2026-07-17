@@ -32,6 +32,15 @@ public class WorkspaceMember {
         this.role = role;
     }
 
+    /// role을 호출부 인자가 아니라 팩토리 이름이 소유 — 잘못된 role 전달 여지를 없앤다(design-patterns P5).
+    public static WorkspaceMember owner(UUID workspaceId, UUID userId) {
+        return new WorkspaceMember(workspaceId, userId, WorkspaceRole.OWNER);
+    }
+
+    public static WorkspaceMember member(UUID workspaceId, UUID userId) {
+        return new WorkspaceMember(workspaceId, userId, WorkspaceRole.MEMBER);
+    }
+
     public UUID getWorkspaceId() {
         return id.getWorkspaceId();
     }

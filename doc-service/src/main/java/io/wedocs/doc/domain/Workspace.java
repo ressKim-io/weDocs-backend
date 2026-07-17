@@ -31,4 +31,10 @@ public class Workspace extends BaseTimeEntity {
         this.name = name;
         this.ownerId = ownerId;
     }
+
+    /// 생성 관문 — id 생성 + 이름 공백 정리(User.register와 동일 규약).
+    /// 생성자를 owner 멤버로 등록하는 것은 같은 트랜잭션에서 WorkspaceService가 수행.
+    public static Workspace create(String name, UUID ownerId) {
+        return new Workspace(UUID.randomUUID(), name.strip(), ownerId);
+    }
 }
