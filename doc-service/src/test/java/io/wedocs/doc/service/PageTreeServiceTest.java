@@ -5,6 +5,7 @@ import io.wedocs.doc.domain.Workspace;
 import io.wedocs.doc.repository.PageRepository;
 import io.wedocs.doc.repository.WorkspaceRepository;
 import io.wedocs.doc.service.EffectivePermission.EffectiveRole;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ class PageTreeServiceTest {
     @Mock private WorkspaceRepository workspaces;
     @Mock private PageAccessGuard pageAccess;
     @Mock private WorkspaceAccessGuard workspaceAccess;
+    @Mock private EntityManager entityManager; // move()의 락 후 clear — 단위에선 no-op mock
 
     private PageTreeService service;
 
@@ -38,7 +40,7 @@ class PageTreeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess);
+        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess, entityManager);
         // 인가 통과·워크스페이스 락 성공을 기본 전제로 — 개별 테스트가 관심사만 override.
         lenient().when(pageAccess.requireEdit(any(), any()))
                 .thenReturn(EffectivePermission.granted(EffectiveRole.EDITOR));
