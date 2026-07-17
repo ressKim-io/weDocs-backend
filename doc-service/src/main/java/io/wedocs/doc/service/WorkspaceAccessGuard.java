@@ -20,15 +20,25 @@ public class WorkspaceAccessGuard {
     private final WorkspaceMemberRepository members;
 
     public WorkspaceMember requireMember(UUID workspaceId, UUID userId) {
-        return members.findById_WorkspaceIdAndId_UserId(workspaceId, userId)
-                .orElseThrow(() -> new NotFoundException(DocErrorCode.WORKSPACE_NOT_FOUND));
+        return loadMember(workspaceId, userId, DocErrorCode.WORKSPACE_NOT_FOUND);
     }
 
     public WorkspaceMember requireOwner(UUID workspaceId, UUID userId) {
-        WorkspaceMember member = requireMember(workspaceId, userId);
+        return requireOwner(workspaceId, userId, DocErrorCode.WORKSPACE_NOT_FOUND);
+    }
+
+    /// 숨겨야 할 리소스가 워크스페이스가 아닌 경우(예: 페이지 공유 관리) 호출자가 404 코드를 지정한다 —
+    /// 미존재와 비멤버를 같은 코드로 붕괴시켜 존재 비노출을 유지(secure-coding P3 IDOR).
+    public WorkspaceMember requireOwner(UUID workspaceId, UUID userId, DocErrorCode notFoundCode) {
+        WorkspaceMember member = loadMember(workspaceId, userId, notFoundCode);
         if (member.getRole() != WorkspaceRole.OWNER) {
             throw new ForbiddenException();
         }
         return member;
+    }
+
+    private WorkspaceMember loadMember(UUID workspaceId, UUID userId, DocErrorCode notFoundCode) {
+        return members.findById_WorkspaceIdAndId_UserId(workspaceId, userId)
+                .orElseThrow(() -> new NotFoundException(notFoundCode));
     }
 }
