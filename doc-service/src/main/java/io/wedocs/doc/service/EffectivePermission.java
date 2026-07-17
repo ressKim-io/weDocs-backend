@@ -16,6 +16,15 @@ public record EffectivePermission(EffectiveRole role) {
         return role != EffectiveRole.NONE;
     }
 
+    /// PRD §4.3 레벨 표의 파생 판단 — 호출자가 role을 꺼내 비교하지 않는다(Tell Don't Ask).
+    public boolean canRead() {
+        return role != EffectiveRole.NONE;
+    }
+
+    public boolean canEdit() {
+        return role == EffectiveRole.EDITOR || role == EffectiveRole.OWNER;
+    }
+
     public enum EffectiveRole {
         NONE,
         VIEWER,
