@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.ForbiddenException;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.service.EffectivePermission.EffectiveRole;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,7 +41,8 @@ class PageAccessGuardTest {
 
         // When / Then
         assertThatThrownBy(() -> guard.requireRead(pageId, userId))
-                .isInstanceOf(PageNotFoundException.class);
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_NOT_FOUND));
     }
 
     @Test
@@ -76,6 +80,7 @@ class PageAccessGuardTest {
 
         // When / Then
         assertThatThrownBy(() -> guard.requireEdit(pageId, userId))
-                .isInstanceOf(PageNotFoundException.class);
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_NOT_FOUND));
     }
 }

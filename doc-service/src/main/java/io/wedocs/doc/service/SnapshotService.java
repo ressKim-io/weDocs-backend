@@ -1,5 +1,7 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.PageSnapshot;
 import io.wedocs.doc.repository.PageSnapshotRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +38,7 @@ public class SnapshotService {
         try {
             snapshots.saveAndFlush(new PageSnapshot(pageId, snapshot, version));
         } catch (DataIntegrityViolationException e) {
-            throw new PageNotFoundException(pageId);
+            throw new NotFoundException(DocErrorCode.PAGE_NOT_FOUND);
         }
         return version;
     }

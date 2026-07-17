@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.ForbiddenException;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.WorkspaceMember;
 import io.wedocs.doc.domain.WorkspaceRole;
 import io.wedocs.doc.repository.WorkspaceMemberRepository;
@@ -18,7 +21,7 @@ public class WorkspaceAccessGuard {
 
     public WorkspaceMember requireMember(UUID workspaceId, UUID userId) {
         return members.findById_WorkspaceIdAndId_UserId(workspaceId, userId)
-                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+                .orElseThrow(() -> new NotFoundException(DocErrorCode.WORKSPACE_NOT_FOUND));
     }
 
     public WorkspaceMember requireOwner(UUID workspaceId, UUID userId) {

@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.ForbiddenException;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.domain.PagePermission;
 import io.wedocs.doc.domain.PagePermissionId;
@@ -33,7 +36,7 @@ public class PageSharingService {
     public void grant(UUID actorId, UUID pageId, UUID targetUserId, PagePermissionLevel level) {
         requireSharableBy(actorId, pageId);
         if (!users.existsById(targetUserId)) {
-            throw new UserNotFoundException();
+            throw new NotFoundException(DocErrorCode.USER_NOT_FOUND);
         }
         pagePermissions.save(new PagePermission(pageId, targetUserId, level));
     }
@@ -48,10 +51,10 @@ public class PageSharingService {
     /// 공유 관리 자격: 그 페이지 워크스페이스의 owner. 비멤버는 페이지 존재 비노출 404
     /// (공유받은 게스트도 관리 표면에서는 비멤버) — 멤버인데 owner 아님만 403.
     private void requireSharableBy(UUID actorId, UUID pageId) {
-        Page page = pages.findById(pageId).orElseThrow(() -> new PageNotFoundException(pageId));
+        Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
         WorkspaceMember membership = members
                 .findById_WorkspaceIdAndId_UserId(page.getWorkspaceId(), actorId)
-                .orElseThrow(() -> new PageNotFoundException(pageId));
+                .orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
         if (membership.getRole() != WorkspaceRole.OWNER) {
             throw new ForbiddenException();
         }

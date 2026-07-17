@@ -1,6 +1,9 @@
 package io.wedocs.doc.service;
 
 import io.wedocs.doc.auth.JwtTokenService;
+import io.wedocs.doc.common.error.ConflictException;
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.UnauthorizedException;
 import io.wedocs.doc.domain.User;
 import io.wedocs.doc.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,14 +38,14 @@ public class AuthService {
         String normalizedEmail = User.normalizeEmail(email);
         // 친절한 409 응답용 사전 검사 — 동시 가입 레이스의 최종 방어는 아래 unique 제약 캐치.
         if (users.findByEmail(normalizedEmail).isPresent()) {
-            throw new EmailAlreadyUsedException();
+            throw new ConflictException(DocErrorCode.EMAIL_ALREADY_USED);
         }
         try {
             // saveAndFlush: unique 위반이 커밋 시점이 아니라 이 메서드 안에서 동기적으로
             // 드러나게 해 catch가 실제로 동작하게 한다(SnapshotService.save와 동일 패턴).
             return users.saveAndFlush(User.register(normalizedEmail, passwordEncoder.encode(rawPassword), displayName));
         } catch (DataIntegrityViolationException e) {
-            throw new EmailAlreadyUsedException(e); // 레이스 패자도 사전검사와 동일한 409로 수렴
+            throw new ConflictException(DocErrorCode.EMAIL_ALREADY_USED, e); // 레이스 패자도 사전검사와 동일한 409로 수렴
         }
     }
 
@@ -54,7 +57,7 @@ public class AuthService {
         String hashToCompare = user != null ? user.getPasswordHash() : timingEqualizerHash;
         boolean passwordMatches = passwordEncoder.matches(rawPassword, hashToCompare);
         if (user == null || !passwordMatches) {
-            throw new InvalidCredentialsException(); // 미존재/불일치 구분 불가 단일 실패(P4)
+            throw new UnauthorizedException(); // 미존재/불일치 구분 불가 단일 실패(P4)
         }
         return tokenService.issue(user);
     }

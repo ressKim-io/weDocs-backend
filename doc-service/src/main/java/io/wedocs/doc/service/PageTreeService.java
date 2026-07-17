@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.ConflictException;
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.repository.PageRepository;
 import io.wedocs.doc.repository.WorkspaceRepository;
@@ -113,7 +116,7 @@ public class PageTreeService {
         pageAccess.requireEdit(pageId, actorId);
         UUID workspaceId = loadPage(pageId).getWorkspaceId();
         workspaces.findWithLockById(workspaceId)
-                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+                .orElseThrow(() -> new NotFoundException(DocErrorCode.WORKSPACE_NOT_FOUND));
         // 락 이전에 적재된 엔티티 전부 폐기 — 이후의 모든 조회가 락 아래에서 최신 커밋을 읽게
         // 강제한다. 행 락은 DB 트랜잭션이 소유하므로 clear에 영향받지 않는다.
         // 불변식: 이 지점 이전에는 어떤 엔티티도 변경(mutation)하지 않는다 — clear는 미flush
@@ -147,7 +150,7 @@ public class PageTreeService {
         pageAccess.requireEdit(parentId, actorId);
         Page parent = loadPage(parentId);
         if (!parent.getWorkspaceId().equals(workspaceId)) {
-            throw new CrossWorkspaceParentException();
+            throw new ConflictException(DocErrorCode.CROSS_WORKSPACE_PARENT);
         }
         return parent;
     }
@@ -158,7 +161,7 @@ public class PageTreeService {
         Page cursor = newParent;
         for (int hop = 0; hop < MAX_ANCESTOR_DEPTH; hop++) {
             if (cursor.getId().equals(movingPageId)) {
-                throw PageCycleException.cycle();
+                throw new ConflictException(DocErrorCode.PAGE_CYCLE);
             }
             UUID parentId = cursor.getParentId();
             if (parentId == null) {
@@ -169,10 +172,10 @@ public class PageTreeService {
                 return; // FK상 도달 불가한 결손 — 탐색 종료(사이클 미발견)
             }
         }
-        throw PageCycleException.depthCapExceeded();
+        throw new ConflictException(DocErrorCode.PAGE_DEPTH_CAP_EXCEEDED);
     }
 
     private Page loadPage(UUID pageId) {
-        return pages.findById(pageId).orElseThrow(() -> new PageNotFoundException(pageId));
+        return pages.findById(pageId).orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
     }
 }

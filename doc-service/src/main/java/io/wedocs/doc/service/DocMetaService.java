@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.InvariantViolationException;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.domain.Workspace;
 import io.wedocs.doc.repository.PageRepository;
@@ -21,11 +24,11 @@ public class DocMetaService {
     private final WorkspaceRepository workspaces;
 
     public DocMetaView getMeta(UUID pageId) {
-        Page page = pages.findById(pageId).orElseThrow(() -> new PageNotFoundException(pageId));
+        Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
         // 1c created_by 도입 전 임시 매핑: 페이지별 owner 컬럼이 아직 없어 워크스페이스 owner로 대체
         // (사용자 확인 완료, PRD §4.3: workspace owner는 전 페이지에 사실상 owner 권한).
         Workspace workspace = workspaces.findById(page.getWorkspaceId())
-                .orElseThrow(() -> new IllegalStateException(
+                .orElseThrow(() -> new InvariantViolationException(
                         "workspace missing for page (FK 불변식 위반): " + page.getWorkspaceId()));
 
         return new DocMetaView(

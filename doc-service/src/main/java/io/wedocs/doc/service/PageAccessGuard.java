@@ -1,5 +1,8 @@
 package io.wedocs.doc.service;
 
+import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.ForbiddenException;
+import io.wedocs.doc.common.error.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -17,7 +20,7 @@ public class PageAccessGuard {
     public EffectivePermission requireRead(UUID pageId, UUID userId) {
         EffectivePermission permission = permissions.resolve(pageId, userId);
         if (!permission.canRead()) {
-            throw new PageNotFoundException(pageId);
+            throw new NotFoundException(DocErrorCode.PAGE_NOT_FOUND);
         }
         return permission;
     }
