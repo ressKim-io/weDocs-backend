@@ -5,6 +5,7 @@ import io.wedocs.doc.domain.Workspace;
 import io.wedocs.doc.repository.PageRepository;
 import io.wedocs.doc.repository.WorkspaceRepository;
 import io.wedocs.doc.service.EffectivePermission.EffectiveRole;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,12 +13,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.mockito.InOrder;
+
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,6 +36,7 @@ class PageTreeServiceTest {
     @Mock private WorkspaceRepository workspaces;
     @Mock private PageAccessGuard pageAccess;
     @Mock private WorkspaceAccessGuard workspaceAccess;
+    @Mock private EntityManager entityManager; // move()의 락 후 clear — 단위에선 no-op mock
 
     private PageTreeService service;
 
@@ -38,7 +45,7 @@ class PageTreeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess);
+        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess, entityManager);
         // 인가 통과·워크스페이스 락 성공을 기본 전제로 — 개별 테스트가 관심사만 override.
         lenient().when(pageAccess.requireEdit(any(), any()))
                 .thenReturn(EffectivePermission.granted(EffectiveRole.EDITOR));
@@ -66,6 +73,53 @@ class PageTreeServiceTest {
         assertThat(moved.getParentId()).isEqualTo(pageB.getId());
         assertThat(moved.getPosition()).isEqualTo(2);
         verify(workspaces).findWithLockById(workspaceId);
+    }
+
+    @Test
+    @DisplayName("move 순서 불변식 — 인가 → 워크스페이스 락 → 컨텍스트 clear (HIGH-2 결정적 회귀 가드)")
+    void move_ordersAuthThenLockThenClear() {
+        // Given: 레이스 토폴로지로는 이 순서 위반을 판별할 수 없음이 실증됨(2-루트 스왑은
+        // id-동등성 검사로 항상 잡힘) — 순서 자체를 결정적으로 고정한다.
+        Page pageA = stubPage(UUID.randomUUID(), null);
+        Page pageB = stubPage(UUID.randomUUID(), null);
+
+        // When
+        service.move(actorId, pageA.getId(), pageB.getId(), 0);
+
+        // Then: 인가(무인가 요청의 락 접근 차단) → 락 → clear(락 이전 L1 캐시 폐기) 순서
+        InOrder order = inOrder(pageAccess, workspaces, entityManager);
+        order.verify(pageAccess).requireEdit(pageA.getId(), actorId);
+        order.verify(workspaces).findWithLockById(workspaceId);
+        order.verify(entityManager).clear();
+    }
+
+    @Test
+    @DisplayName("list — 부모가 로드셋에 없는 행(아카이브 부모의 자손·상한 잘림)은 도달 불가로 숨김")
+    void list_hidesRowsWithoutLoadedParent() {
+        // Given: 루트 + 부모가 로드셋 밖(아카이브라 미로드)인 고아 행
+        Page root = new Page(UUID.randomUUID(), workspaceId, null, "root", 0, false);
+        Page orphan = new Page(UUID.randomUUID(), workspaceId, UUID.randomUUID(), "orphan", 0, false);
+        when(pages.findByWorkspaceIdAndArchivedFalseOrderByPositionAscCreatedAtAsc(eq(workspaceId), any()))
+                .thenReturn(List.of(root, orphan));
+
+        // When / Then
+        assertThat(service.list(actorId, workspaceId)).containsExactly(root);
+    }
+
+    @Test
+    @DisplayName("list — 오염 데이터(상호 참조 사이클)는 무한루프 없이 배제(fail-closed)")
+    void list_excludesCyclicRows_withoutLooping() {
+        // Given: 루트 + 서로를 부모로 가리키는 X↔Y(루트 도달 불가)
+        UUID xId = UUID.randomUUID();
+        UUID yId = UUID.randomUUID();
+        Page root = new Page(UUID.randomUUID(), workspaceId, null, "root", 0, false);
+        Page x = new Page(xId, workspaceId, yId, "x", 0, false);
+        Page y = new Page(yId, workspaceId, xId, "y", 0, false);
+        when(pages.findByWorkspaceIdAndArchivedFalseOrderByPositionAscCreatedAtAsc(eq(workspaceId), any()))
+                .thenReturn(List.of(root, x, y));
+
+        // When / Then: 종료 자체가 사이클 안전성의 증명, 결과는 도달 가능한 루트만
+        assertThat(service.list(actorId, workspaceId)).containsExactly(root);
     }
 
     @Test

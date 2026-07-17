@@ -8,6 +8,12 @@
 # 생기기 전까지는 살아있었지만, 이 파일 도입 이후 모든 doc-service 테스트에서 조용히
 # 꺼져 있었다(코드리뷰로 발견). 테스트에 실질적인 main 쪽 키는 여기서 명시 복원한다.
 spring:
+  datasource:
+    hikari:
+      # main 키 명시 미러(이 파일이 main을 완전 대체) — init SQL 오타가 테스트에서 잡히게 하고,
+      # 락 타임아웃 동작(무제한 대기 차단)이 테스트·런타임에서 동일하도록 유지.
+      maximum-pool-size: 10
+      connection-init-sql: SET lock_timeout = '${WEDOCS_DB_LOCK_TIMEOUT:3s}'
   jpa:
     hibernate:
       ddl-auto: validate

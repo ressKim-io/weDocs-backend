@@ -35,7 +35,8 @@ public class WorkspaceService {
         return workspace;
     }
 
-    /// 내 멤버십 기준 목록 — 멤버십 행 수 = 사용자당 소규모(자기 제한적)라 별도 cap 불필요.
+    /// 내 멤버십 기준 목록 — 멤버십 행 수 = 사용자당 소규모(자기 제한적)라 별도 cap 없이 허용.
+    /// secure-coding P2 예외 — 규모가 관측되면 Pageable 전환: retrofit plan P2 · SDD §15 M3 캡 정량화 트랙.
     public List<Workspace> listMine(UUID userId) {
         List<UUID> workspaceIds = members.findById_UserId(userId).stream()
                 .map(WorkspaceMember::getWorkspaceId)
