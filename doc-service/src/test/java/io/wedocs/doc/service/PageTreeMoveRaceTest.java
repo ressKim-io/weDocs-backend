@@ -28,12 +28,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// move() 직렬화 실증(1c 게이트 HIGH-2·LOW 연동) — 상호 이동 레이스가 어떤 인터리빙에서도
-/// 사이클을 커밋하지 못함을 실 DB 락으로 검증한다. 특정 인터리빙의 결정적 재현이 아니라
-/// 불변식(최종 그래프 비순환) 검증 — 락·검증 순서가 무너지면 반복 라운드에서 잡힌다.
+/// move() 직렬화의 실-DB 불변식 가드(1c 게이트 HIGH-2·LOW 연동) — 상호 이동 레이스에서
+/// 최종 그래프 비순환·패자의 사이클 거부를 검증한다. ⚠️ 판별력 한계: 2-루트 스왑 토폴로지는
+/// 락-이전-검증(구버전) 코드도 통과함이 실증됨(사이클 검사의 id-동등성은 stale 필드와 무관)
+/// — HIGH-2의 결정적 회귀 가드는 PageTreeServiceTest.move_ordersAuthThenLockThenClear가
+/// 소유하고, 여기는 워크스페이스 락 직렬화가 실 Postgres에서 동작함을 지키는 가드다.
 @SpringBootTest
 @Testcontainers
 class PageTreeMoveRaceTest {
@@ -86,7 +89,8 @@ class PageTreeMoveRaceTest {
             start.countDown();
             for (Future<?> task : tasks) {
                 try {
-                    task.get();
+                    // 타임아웃 = 회귀로 데드락·무한대기가 생겨도 CI 잡이 아니라 이 테스트가 죽게.
+                    task.get(30, TimeUnit.SECONDS);
                 } catch (ExecutionException e) {
                     failures.add(e.getCause());
                 }
