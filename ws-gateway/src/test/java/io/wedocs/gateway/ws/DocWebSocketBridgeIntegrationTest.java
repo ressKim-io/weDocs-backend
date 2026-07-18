@@ -22,22 +22,26 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// raw WS 클라이언트 ↔ gateway ↔ fake in-process gRPC 엔진 종단 검증.
 /// 검증: (1) doc-id 메타데이터 전파 + 인바운드 SyncStep1 forward, (2) ServerFrame{update} → WS Update(2) fan-out(2클라).
@@ -134,6 +138,33 @@ class DocWebSocketBridgeIntegrationTest {
 
         // Then: 게이트웨이가 엔진 요청 스트림을 완료시켜 누수가 없다
         assertThat(ENGINE.completedStreams.poll(TIMEOUT_MS, TimeUnit.MILLISECONDS)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("형식 위반 room(불허 문자)은 핸드셰이크 단계에서 거절된다(업그레이드 전, 엔진 미관측)")
+    void invalidRoom_rejectedAtHandshake() throws Exception {
+        // Given/When: 불허 문자(.)가 포함된 room으로 접속 시도
+        CollectingHandler client = new CollectingHandler();
+
+        // Then: 인터셉터가 업그레이드 전 400으로 거절 → 핸드셰이크 실패, 엔진은 doc-id를 관측하지 못한다.
+        assertThatThrownBy(() -> connect(client, "bad.room")).isInstanceOf(ExecutionException.class);
+        assertThat(ENGINE.observedDocIds.poll(500, TimeUnit.MILLISECONDS)).isNull();
+    }
+
+    @Test
+    @DisplayName("화이트리스트에 없는 Origin의 핸드셰이크는 거부된다(네이티브 WS 유일 방어선)")
+    void disallowedOrigin_rejectedAtHandshake() throws Exception {
+        // Given: 허용되지 않은 Origin 헤더 + 유효 room
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        headers.setOrigin("https://evil.example");
+        String url = "ws://localhost:" + port + "/ws/doc/demo";
+
+        // When/Then: room이 유효해도 Origin 불일치로 핸드셰이크 실패 → 엔진 미관측.
+        assertThatThrownBy(() -> new StandardWebSocketClient()
+                .execute(new CollectingHandler(), headers, URI.create(url))
+                .get(TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                .isInstanceOf(ExecutionException.class);
+        assertThat(ENGINE.observedDocIds.poll(500, TimeUnit.MILLISECONDS)).isNull();
     }
 
     private WebSocketSession connect(BinaryWebSocketHandler handler, String room) throws Exception {

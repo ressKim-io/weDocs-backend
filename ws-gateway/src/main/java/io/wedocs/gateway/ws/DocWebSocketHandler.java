@@ -13,7 +13,6 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,14 +38,16 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        String room = roomFromUri(session.getUri());
-        if (room.isEmpty()) {
-            closeQuietly(session, CloseStatus.BAD_DATA.withReason("missing doc room"));
+        // room은 핸드셰이크 인터셉터가 업그레이드 전에 검증해 attribute로 넣었다(무효 room은 여기 도달 못 함).
+        RoomId roomId = (RoomId) session.getAttributes().get(RoomHandshakeInterceptor.ROOM_ATTRIBUTE);
+        if (roomId == null) { // 방어: 인터셉터 미배선 시에만 발생 — 안전하게 닫는다.
+            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("room not resolved"));
             return;
         }
-        StreamObserver<ServerFrame> toClient = engineResponseObserver(session, room);
-        StreamObserver<ClientFrame> toEngine = engineClient.openSync(room, toClient);
-        bridges.put(session.getId(), new SessionBridge(room, toEngine));
+        StreamObserver<ServerFrame> toClient = engineResponseObserver(session, roomId);
+        // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
+        StreamObserver<ClientFrame> toEngine = engineClient.openSync(roomId.value(), toClient);
+        bridges.put(session.getId(), new SessionBridge(roomId, toEngine));
     }
 
     @Override
@@ -57,11 +58,11 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         // onNext와 onCompleted가 동시 호출되지 않음(grpc-java 계약: 동시 호출 금지). (§D-6 확장)
         bridges.computeIfPresent(session.getId(), (id, bridge) -> {
             try {
-                codec.decodeInbound(payload, bridge.room())
+                codec.decodeInbound(payload, bridge.room().value())
                         .ifPresent(bridge.toEngine()::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
-                log.warn("malformed frame dropped session={} room={}", id, bridge.room(), e);
+                log.warn("malformed frame dropped session={} room={}", id, bridge.room().value(), e);
             }
             return bridge;
         });
@@ -82,7 +83,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     }
 
     /// 엔진 → 브라우저 방향. 이 콜백만이 WS의 유일한 writer다(§D-6).
-    private StreamObserver<ServerFrame> engineResponseObserver(WebSocketSession session, String room) {
+    private StreamObserver<ServerFrame> engineResponseObserver(WebSocketSession session, RoomId room) {
         return new StreamObserver<>() {
             @Override
             public void onNext(ServerFrame frame) {
@@ -91,7 +92,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
             @Override
             public void onError(Throwable t) {
-                log.warn("engine stream error session={} room={}", session.getId(), room, t);
+                log.warn("engine stream error session={} room={}", session.getId(), room.value(), t);
                 endSession(session, CloseStatus.SERVER_ERROR);
             }
 
@@ -121,18 +122,6 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         closeQuietly(session, status);
     }
 
-    private static String roomFromUri(URI uri) {
-        if (uri == null) {
-            return "";
-        }
-        String path = uri.getPath(); // 예: /ws/doc/demo
-        if (path == null) { // opaque URI 방어(표준 WS 업그레이드 URI는 항상 hierarchical)
-            return "";
-        }
-        int lastSlash = path.lastIndexOf('/');
-        return lastSlash >= 0 ? path.substring(lastSlash + 1) : "";
-    }
-
     private static byte[] toBytes(ByteBuffer buffer) {
         byte[] out = new byte[buffer.remaining()];
         buffer.get(out);
@@ -158,6 +147,6 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         }
     }
 
-    private record SessionBridge(String room, StreamObserver<ClientFrame> toEngine) {
+    private record SessionBridge(RoomId room, StreamObserver<ClientFrame> toEngine) {
     }
 }

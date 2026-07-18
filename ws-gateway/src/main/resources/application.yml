@@ -11,3 +11,7 @@ server:
 wedocs:
   engine:
     target: localhost:50051   # crdt-engine gRPC (bidi Sync)
+  gateway:
+    # WS Origin 화이트리스트(secure-coding.md P5) — 콤마 구분. 기본 = vite dev(5173).
+    # prod Origin은 WEDOCS_GATEWAY_ALLOWED_ORIGINS로 주입(환경 분리, "*" 금지).
+    allowed-origins: ${WEDOCS_GATEWAY_ALLOWED_ORIGINS:http://localhost:5173}
