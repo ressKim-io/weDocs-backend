@@ -1,8 +1,5 @@
 package io.wedocs.doc.auth;
 
-import io.wedocs.doc.api.JwksController;
-import io.wedocs.doc.domain.SystemRole;
-import io.wedocs.doc.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
