@@ -1,7 +1,7 @@
 # proto-gen: controller(SSOT)의 proto에서 Java + gRPC stub 생성 (build/ 아래, gitignored).
 # buf.gen.yaml의 inputs(로컬 ../weDocs-controller/proto) 사용. CI/재현은 git remote로 교체(ADR-0010).
 
-.PHONY: proto-gen compile test build run run-otel clean
+.PHONY: proto-gen compile test build run run-doc run-otel clean
 
 # OTel javaagent: W3C traceparent 자동 전파(가드레일 4). 바이트코드 계측 = JNI 아님(가드레일 3 무관).
 # jar는 커밋 안 함(.gitignore tools/*.jar) — 최초 1회 GitHub releases v2.29.0에서 받음(버전핀).
@@ -24,6 +24,12 @@ build: proto-gen
 
 run: proto-gen
 	./gradlew :ws-gateway:bootRun
+
+# run-doc: doc-service 로컬 기동(dev 프로파일). main application.yml은 datasource fail-closed(env 필수)라
+# 로컬 편의 기본값(localhost)은 application-dev.yml에만 두고 여기서 dev 프로파일로 활성화한다.
+# 로컬 Postgres 필요: docker run --rm -e POSTGRES_DB=wedocs -e POSTGRES_USER=wedocs -e POSTGRES_PASSWORD=wedocs -p 5432:5432 postgres:16-alpine
+run-doc: proto-gen
+	SPRING_PROFILES_ACTIVE=dev ./gradlew :doc-service:bootRun
 
 $(OTEL_AGENT):
 	@mkdir -p tools
