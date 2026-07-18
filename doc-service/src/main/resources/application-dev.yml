@@ -1,0 +1,8 @@
+# dev 프로파일 — 로컬 개발 편의용 datasource 기본값(SPRING_PROFILES_ACTIVE=dev, `make run-doc`).
+# 커밋된 크리덴셜은 여기(명시적 dev)에만 둔다 — main application.yml은 env 주입 fail-closed(security.md).
+# non-dev(staging/prod)는 이 프로파일을 활성화하지 않으므로 이 값이 새지 않는다.
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wedocs}
+    username: ${SPRING_DATASOURCE_USERNAME:wedocs}
+    password: ${SPRING_DATASOURCE_PASSWORD:wedocs}

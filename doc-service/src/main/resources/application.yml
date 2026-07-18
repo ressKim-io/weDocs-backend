@@ -5,10 +5,15 @@ spring:
     virtual:
       enabled: true   # Java 25 Virtual Thread — I/O 바운드(DB) doc-service
   datasource:
-    # 시크릿은 환경변수 주입(security.md). 로컬 기본값은 dev 편의용.
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wedocs}
-    username: ${SPRING_DATASOURCE_USERNAME:wedocs}
-    password: ${SPRING_DATASOURCE_PASSWORD:wedocs}
+    # 접속정보·시크릿은 환경변수 주입 필수(security.md) — 커밋된 dev 기본값을 제거해 non-dev 환경을 fail-closed로.
+    # env 미설정 시: 미해결 placeholder가 리터럴로 통과 → Hikari `DatabaseDriver.fromJdbcUrl`에서
+    # `IllegalArgumentException: 'url' must start with "jdbc"`로 기동 실패(silent/embedded fallback 없음, 실측 확인).
+    # 로컬 dev 기본값 = application-dev.yml(SPRING_PROFILES_ACTIVE=dev, `make run-doc`).
+    # 테스트: @ServiceConnection이 datasource 주입 + test/resources/application.yml이 이 main을 **완전 대체**
+    # (동명 classpath 리소스, 병합 아님) → 이 키 제거 무영향(148 green).
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     hikari:
       # 풀 크기 기본값(10) 암묵 의존 금지(config-contract-audit) — VT 대량 동시 요청에서도 DB
       # 커넥션 상한은 이 값. 정량 재조정은 M3 부하검증(SDD §15)에서.
