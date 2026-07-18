@@ -1,14 +1,14 @@
 package io.wedocs.doc;
 
-import io.wedocs.doc.domain.Page;
-import io.wedocs.doc.domain.PageSnapshot;
-import io.wedocs.doc.domain.SystemRole;
-import io.wedocs.doc.domain.User;
-import io.wedocs.doc.domain.Workspace;
-import io.wedocs.doc.repository.PageRepository;
-import io.wedocs.doc.repository.PageSnapshotRepository;
-import io.wedocs.doc.repository.UserRepository;
-import io.wedocs.doc.repository.WorkspaceRepository;
+import io.wedocs.doc.page.Page;
+import io.wedocs.doc.snapshot.PageSnapshot;
+import io.wedocs.doc.auth.SystemRole;
+import io.wedocs.doc.auth.User;
+import io.wedocs.doc.workspace.Workspace;
+import io.wedocs.doc.page.PageRepository;
+import io.wedocs.doc.snapshot.PageSnapshotRepository;
+import io.wedocs.doc.auth.UserRepository;
+import io.wedocs.doc.workspace.WorkspaceRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.PersistenceException;

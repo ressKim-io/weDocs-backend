@@ -1,8 +1,6 @@
 package io.wedocs.doc.auth;
 
 import com.nimbusds.jwt.SignedJWT;
-import io.wedocs.doc.domain.SystemRole;
-import io.wedocs.doc.domain.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

@@ -1,12 +1,12 @@
 package io.wedocs.doc;
 
-import io.wedocs.doc.domain.Page;
-import io.wedocs.doc.domain.PagePermission;
-import io.wedocs.doc.domain.PagePermissionLevel;
-import io.wedocs.doc.domain.User;
-import io.wedocs.doc.domain.Workspace;
-import io.wedocs.doc.domain.WorkspaceMember;
-import io.wedocs.doc.domain.WorkspaceRole;
+import io.wedocs.doc.page.Page;
+import io.wedocs.doc.page.PagePermission;
+import io.wedocs.doc.page.PagePermissionLevel;
+import io.wedocs.doc.auth.User;
+import io.wedocs.doc.workspace.Workspace;
+import io.wedocs.doc.workspace.WorkspaceMember;
+import io.wedocs.doc.workspace.WorkspaceRole;
 
 import java.util.UUID;
 
