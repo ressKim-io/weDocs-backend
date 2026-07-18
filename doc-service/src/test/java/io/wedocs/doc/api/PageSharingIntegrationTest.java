@@ -169,6 +169,26 @@ class PageSharingIntegrationTest extends RestTestSupport {
     }
 
     @Test
+    @DisplayName("공유 관리 IDOR 붕괴 — 미존재 페이지와 비멤버 실페이지가 동일한 page-not-found(구분 불가)")
+    void sharing_hidesPageExistence_indistinguishably() throws Exception {
+        // Given: owner의 실제 페이지 + 완전한 외부인
+        AuthedUser owner = signupAndLogin("owner");
+        AuthedUser outsider = signupAndLogin("outsider");
+        AuthedUser target = signupAndLogin("target");
+        String workspaceId = createWorkspace(owner);
+        String realPageId = createPage(owner, workspaceId, null, "실 페이지");
+
+        // When / Then: 비멤버가 실 페이지 관리 시도 vs 존재하지 않는 페이지 관리 시도 —
+        // 둘 다 404 page-not-found로 붕괴돼야 page 존재 여부를 추론당하지 않는다(secure-coding P3).
+        grant(outsider, realPageId, target.id(), PagePermissionLevel.VIEWER)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("page-not-found"));
+        grant(owner, UUID.randomUUID().toString(), target.id(), PagePermissionLevel.VIEWER)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("page-not-found"));
+    }
+
+    @Test
     @DisplayName("공유받은 비멤버 editor는 공유 페이지 아래 자식 생성 가능 — 트리 내부는 parent ≥editor 몫")
     void sharedEditor_canCreateChildUnderSharedPage() throws Exception {
         // Given: 비멤버 guest에게 부모 페이지 editor 공유

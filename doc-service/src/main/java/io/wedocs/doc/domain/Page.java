@@ -18,6 +18,12 @@ import java.util.UUID;
 @Table(name = "pages")
 public class Page extends BaseTimeEntity {
 
+    /// 페이지 조상 트리 탐색의 방어적 깊이 상한 — 권한 상속 해석(PermissionService)과 사이클 검사
+    /// (PageTreeService)가 공유하는 페이지 트리 도메인 불변식. 정상 위키 깊이(수십 레벨)를 넉넉히
+    /// 초과하며, ADR-0012의 사이클 불변식과 별개로 데이터 오염/미래 버그의 안전망(secure-coding P2) —
+    /// 정상 경로에선 도달 불가, 도달 시 fail-closed. 어느 한 서비스에 종속되지 않도록 도메인 타입이 소유.
+    public static final int MAX_ANCESTOR_DEPTH = 64;
+
     @Id
     private UUID id;
 

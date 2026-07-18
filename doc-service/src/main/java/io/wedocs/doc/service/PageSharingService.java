@@ -1,18 +1,14 @@
 package io.wedocs.doc.service;
 
 import io.wedocs.doc.common.error.DocErrorCode;
-import io.wedocs.doc.common.error.ForbiddenException;
 import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.domain.Page;
 import io.wedocs.doc.domain.PagePermission;
 import io.wedocs.doc.domain.PagePermissionId;
 import io.wedocs.doc.domain.PagePermissionLevel;
-import io.wedocs.doc.domain.WorkspaceMember;
-import io.wedocs.doc.domain.WorkspaceRole;
 import io.wedocs.doc.repository.PagePermissionRepository;
 import io.wedocs.doc.repository.PageRepository;
 import io.wedocs.doc.repository.UserRepository;
-import io.wedocs.doc.repository.WorkspaceMemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +23,7 @@ import java.util.UUID;
 public class PageSharingService {
 
     private final PageRepository pages;
-    private final WorkspaceMemberRepository members;
+    private final WorkspaceAccessGuard workspaceAccess;
     private final UserRepository users;
     private final PagePermissionRepository pagePermissions;
 
@@ -48,15 +44,12 @@ public class PageSharingService {
         pagePermissions.deleteById(new PagePermissionId(pageId, targetUserId));
     }
 
-    /// 공유 관리 자격: 그 페이지 워크스페이스의 owner. 비멤버는 페이지 존재 비노출 404
-    /// (공유받은 게스트도 관리 표면에서는 비멤버) — 멤버인데 owner 아님만 403.
+    /// 공유 관리 자격: 그 페이지 워크스페이스의 owner. 미존재 페이지·비멤버·공유받은 게스트를 모두
+    /// 같은 page-not-found로 붕괴시켜 존재 비노출(IDOR) — 멤버인데 owner 아님만 403.
+    /// 소유 feature(workspace)의 공개 API(WorkspaceAccessGuard)를 경유해 멤버십 조회를 재사용한다
+    /// (교차 feature repository 직접 주입 지양, layering-readability P7). 404 코드만 page로 지정.
     private void requireSharableBy(UUID actorId, UUID pageId) {
         Page page = pages.findById(pageId).orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
-        WorkspaceMember membership = members
-                .findById_WorkspaceIdAndId_UserId(page.getWorkspaceId(), actorId)
-                .orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
-        if (membership.getRole() != WorkspaceRole.OWNER) {
-            throw new ForbiddenException();
-        }
+        workspaceAccess.requireOwner(page.getWorkspaceId(), actorId, DocErrorCode.PAGE_NOT_FOUND);
     }
 }

@@ -17,8 +17,9 @@ public record EffectivePermission(EffectiveRole role) {
     }
 
     /// PRD §4.3 레벨 표의 파생 판단 — 호출자가 role을 꺼내 비교하지 않는다(Tell Don't Ask).
+    /// 읽기 가능 = 접근 허용과 동일 조건 — allowed()에 위임해 판정을 한 곳에 둔다.
     public boolean canRead() {
-        return role != EffectiveRole.NONE;
+        return allowed();
     }
 
     public boolean canEdit() {

@@ -85,4 +85,28 @@ class WorkspaceAccessGuardTest {
                 .isInstanceOfSatisfying(NotFoundException.class,
                         e -> assertThat(e.code()).isEqualTo(DocErrorCode.WORKSPACE_NOT_FOUND));
     }
+
+    @Test
+    @DisplayName("3-arg requireOwner — 비멤버는 호출자가 지정한 404 코드로 붕괴(다른 feature 존재 비노출 재사용)")
+    void requireOwner_usesCallerNotFoundCode_whenNotMember() {
+        // Given
+        when(members.findById_WorkspaceIdAndId_UserId(workspaceId, userId)).thenReturn(Optional.empty());
+
+        // When / Then: 페이지 공유 관리 경로처럼 PAGE_NOT_FOUND를 지정하면 그 코드가 실린다
+        assertThatThrownBy(() -> guard.requireOwner(workspaceId, userId, DocErrorCode.PAGE_NOT_FOUND))
+                .isInstanceOfSatisfying(NotFoundException.class,
+                        e -> assertThat(e.code()).isEqualTo(DocErrorCode.PAGE_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("3-arg requireOwner — 멤버지만 owner 아님은 404 코드와 무관하게 403")
+    void requireOwner_forbidden_whenMemberNotOwner_regardlessOfCode() {
+        // Given: member(비-owner)
+        when(members.findById_WorkspaceIdAndId_UserId(workspaceId, userId))
+                .thenReturn(Optional.of(new WorkspaceMember(workspaceId, userId, WorkspaceRole.MEMBER)));
+
+        // When / Then: 존재를 이미 아는 멤버이므로 지정 404 코드와 무관하게 403
+        assertThatThrownBy(() -> guard.requireOwner(workspaceId, userId, DocErrorCode.PAGE_NOT_FOUND))
+                .isInstanceOf(ForbiddenException.class);
+    }
 }
