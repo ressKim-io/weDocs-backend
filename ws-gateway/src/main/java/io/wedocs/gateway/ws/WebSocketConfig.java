@@ -1,5 +1,8 @@
 package io.wedocs.gateway.ws;
 
+import io.wedocs.gateway.auth.AuthHandshakeHandler;
+import io.wedocs.gateway.auth.AuthHandshakeInterceptor;
+import io.wedocs.gateway.auth.GatewayAuthProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,12 +32,18 @@ public class WebSocketConfig implements WebSocketConfigurer {
     static final long SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000L;
 
     private final DocWebSocketHandler handler;
+    private final AuthHandshakeInterceptor authInterceptor;
+    private final GatewayAuthProperties authProperties;
     private final String[] allowedOrigins;
 
     public WebSocketConfig(
             DocWebSocketHandler handler,
+            AuthHandshakeInterceptor authInterceptor,
+            GatewayAuthProperties authProperties,
             @Value("${wedocs.gateway.allowed-origins}") String[] allowedOrigins) {
         this.handler = handler;
+        this.authInterceptor = authInterceptor;
+        this.authProperties = authProperties;
         this.allowedOrigins = allowedOrigins;
     }
 
@@ -42,10 +51,17 @@ public class WebSocketConfig implements WebSocketConfigurer {
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         // /ws/doc/{room} 의 마지막 세그먼트가 docId(=room). 핸드셰이크 인터셉터가 **업그레이드 전** 검증해
         // 유효 RoomId를 세션 attribute로 넘기고, 핸들러는 그 doc-id를 엔진 Sync 메타데이터로 전달한다(§D-1).
+        // 인터셉터 순서 = room(무효 room=400) → auth(무인증/무효 토큰=401). 둘 다 업그레이드 전 거절이라
+        // 세션·엔진 스트림 자원이 붙기 전에 걸러진다(ADR-0021 · secure-coding.md P2). 값싼 room 검증을 먼저 둔다.
+        // 인증 성공 시 AuthHandshakeHandler가 토큰이 아닌 SENTINEL 서브프로토콜만 echo해 핸드셰이크를 완성한다.
         // 네이티브 WS는 CSRF 보호가 없어 Origin 검사가 유일한 방어선(secure-coding.md P5) → "*" 금지, 화이트리스트만.
+        // Origin 검사는 setAllowedOrigins가 auth 인터셉터 뒤(프레임워크 단계)에서 수행하므로, 핸드셰이크 최종
+        // 성공(ws_handshake_total{ok})은 auth 인터셉터가 아니라 세션 수립 시점(DocWebSocketHandler)에서 기록한다
+        // — Origin으로 최종 403될 핸드셰이크를 result=ok로 오집계하지 않기 위함(ADR-0021, code-review H-1).
         // 기본 = vite dev(5173). prod Origin은 WEDOCS_GATEWAY_ALLOWED_ORIGINS로 주입(환경 분리).
         registry.addHandler(handler, "/ws/doc/*")
-                .addInterceptors(new RoomHandshakeInterceptor())
+                .addInterceptors(new RoomHandshakeInterceptor(), authInterceptor)
+                .setHandshakeHandler(new AuthHandshakeHandler(authProperties.subprotocol()))
                 .setAllowedOrigins(allowedOrigins);
     }
 

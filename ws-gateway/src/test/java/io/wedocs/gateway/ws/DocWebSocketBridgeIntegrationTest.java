@@ -1,6 +1,17 @@
 package io.wedocs.gateway.ws;
 
 import com.google.protobuf.ByteString;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
@@ -9,6 +20,9 @@ import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.wedocs.gateway.auth.AuthSubprotocol;
+import io.wedocs.gateway.auth.JwtVerifier;
 import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.CrdtEngineGrpc;
 import io.wedocs.proto.crdt.ServerFrame;
@@ -18,7 +32,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.BinaryMessage;
@@ -30,7 +49,9 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -42,11 +63,13 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
 /// raw WS 클라이언트 ↔ gateway ↔ fake in-process gRPC 엔진 종단 검증.
 /// 검증: (1) doc-id 메타데이터 전파 + 인바운드 SyncStep1 forward, (2) ServerFrame{update} → WS Update(2) fan-out(2클라).
 /// 실제 Rust 엔진 수렴은 로컬 스모크 + Phase 3 E2E가 담당(여기선 와이어↔gRPC 브리지 배선만 결정적으로 검증).
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(DocWebSocketBridgeIntegrationTest.TestAuthConfig.class)
 class DocWebSocketBridgeIntegrationTest {
 
     private static final long TIMEOUT_MS = 5_000;
@@ -55,6 +78,9 @@ class DocWebSocketBridgeIntegrationTest {
 
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     private final List<WebSocketSession> openedSessions = new ArrayList<>();
 
@@ -154,26 +180,77 @@ class DocWebSocketBridgeIntegrationTest {
     @Test
     @DisplayName("화이트리스트에 없는 Origin의 핸드셰이크는 거부된다(네이티브 WS 유일 방어선)")
     void disallowedOrigin_rejectedAtHandshake() throws Exception {
-        // Given: 허용되지 않은 Origin 헤더 + 유효 room
+        // Given: 허용되지 않은 Origin + 유효 room + 유효 토큰(인증이 통과해도 Origin으로 걸리는지 격리 검증)
+        double okBefore = handshakeOkCount();
         WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
         headers.setOrigin("https://evil.example");
+        headers.setSecWebSocketProtocol(List.of(AuthSubprotocol.SENTINEL, validToken()));
         String url = "ws://localhost:" + port + "/ws/doc/demo";
 
-        // When/Then: room이 유효해도 Origin 불일치로 핸드셰이크 실패 → 엔진 미관측.
+        // When/Then: 인증이 유효해도 Origin 불일치로 핸드셰이크 실패 → 엔진 미관측.
         assertThatThrownBy(() -> new StandardWebSocketClient()
                 .execute(new CollectingHandler(), headers, URI.create(url))
                 .get(TIMEOUT_MS, TimeUnit.MILLISECONDS))
                 .isInstanceOf(ExecutionException.class);
         assertThat(ENGINE.observedDocIds.poll(500, TimeUnit.MILLISECONDS)).isNull();
+        // 최종 응답이 403인 핸드셰이크는 result=ok로 세지 않는다 — 앱 신호와 상태코드 정합(ADR-0021, code-review H-1).
+        assertThat(handshakeOkCount()).isEqualTo(okBefore);
+    }
+
+    private double handshakeOkCount() {
+        var counter = meterRegistry.find("ws.handshake").tag("result", "ok").counter();
+        return counter == null ? 0.0 : counter.count();
+    }
+
+    @Test
+    @DisplayName("토큰 없는 핸드셰이크는 인증 실패로 거절된다(업그레이드 전, 엔진 미관측)")
+    void noToken_rejectedAtHandshake() throws Exception {
+        // Given: 인증 서브프로토콜(토큰) 없이 유효 room으로 접속 시도
+        String url = "ws://localhost:" + port + "/ws/doc/demo";
+
+        // When/Then: auth 인터셉터가 업그레이드 전 401로 거절 → 핸드셰이크 실패, 엔진은 doc-id를 관측 못 함.
+        assertThatThrownBy(() -> new StandardWebSocketClient()
+                .execute(new CollectingHandler(), url)
+                .get(TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                .isInstanceOf(ExecutionException.class);
+        assertThat(ENGINE.observedDocIds.poll(500, TimeUnit.MILLISECONDS)).isNull();
+    }
+
+    @Test
+    @DisplayName("핸드셰이크 응답은 SENTINEL만 협상하고 토큰은 반향하지 않는다(토큰 유출 방지)")
+    void handshake_echoesOnlySentinelSubprotocol() throws Exception {
+        // Given/When: [SENTINEL, <jwt>]로 접속 성공
+        double okBefore = handshakeOkCount();
+        WebSocketSession session = connect(new CollectingHandler(), "demo");
+
+        // Then: 서버가 협상한 서브프로토콜은 SENTINEL뿐 — 토큰은 응답 헤더로 새지 않는다(단 하나만 협상 가능).
+        assertThat(session.getAcceptedProtocol()).isEqualTo(AuthSubprotocol.SENTINEL);
+        // 성공 핸드셰이크는 afterHandshake(101 이후 실행)에서 result=ok로 집계된다 — H-1 수정의 정상 경로 실증(await).
+        await().atMost(2, TimeUnit.SECONDS).untilAsserted(() -> assertThat(handshakeOkCount()).isEqualTo(okBefore + 1));
     }
 
     private WebSocketSession connect(BinaryWebSocketHandler handler, String room) throws Exception {
+        // 인증이 필수 — 유효 JWT를 Sec-WebSocket-Protocol([SENTINEL, <jwt>])로 실어 핸드셰이크를 통과시킨다.
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        headers.setSecWebSocketProtocol(List.of(AuthSubprotocol.SENTINEL, validToken()));
         String url = "ws://localhost:" + port + "/ws/doc/" + room;
         WebSocketSession session = new StandardWebSocketClient()
-                .execute(handler, url)
+                .execute(handler, headers, URI.create(url))
                 .get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
         openedSessions.add(session); // @AfterEach에서 무조건 정리되도록 추적
         return session;
+    }
+
+    /// 테스트 JWKS 키로 서명한 유효 토큰(sub/iss/exp) — 발급측 doc-service 토큰과 동일 구조.
+    private String validToken() throws Exception {
+        Instant now = Instant.now();
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .subject("it-user").issuer("wedocs-doc-service")
+                .issueTime(Date.from(now)).expirationTime(Date.from(now.plusSeconds(300))).build();
+        SignedJWT jwt = new SignedJWT(
+                new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(TestAuthConfig.key.getKeyID()).build(), claims);
+        jwt.sign(new RSASSASigner(TestAuthConfig.key));
+        return jwt.serialize();
     }
 
     /// WS 클라이언트가 받은 바이너리 메시지를 모은다.
@@ -186,6 +263,22 @@ class DocWebSocketBridgeIntegrationTest {
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
             received.add(bytes);
+        }
+    }
+
+    /// 인증 검증기를 in-memory 테스트 키로 대체(원격 doc-service JWKS 불필요). @Primary라 실 배선(AuthConfig)
+    /// 대신 주입된다 — 이 키로 서명한 토큰만 통과. 실 verifier 빈은 지연 fetch라 무해하게 공존한다.
+    @TestConfiguration
+    static class TestAuthConfig {
+
+        static RSAKey key;
+
+        @Bean
+        @Primary
+        JwtVerifier testJwtVerifier() throws Exception {
+            key = new RSAKeyGenerator(2048).keyID("it-kid").generate();
+            JWKSource<SecurityContext> keySource = new ImmutableJWKSet<>(new JWKSet(key.toPublicJWK()));
+            return JwtVerifier.fromKeySource(keySource, "wedocs-doc-service", java.time.Duration.ofSeconds(60));
         }
     }
 
