@@ -15,3 +15,21 @@ wedocs:
     # WS Origin 화이트리스트(secure-coding.md P5) — 콤마 구분. 기본 = vite dev(5173).
     # prod Origin은 WEDOCS_GATEWAY_ALLOWED_ORIGINS로 주입(환경 분리, "*" 금지).
     allowed-origins: ${WEDOCS_GATEWAY_ALLOWED_ORIGINS:http://localhost:5173}
+    auth:
+      # doc-service JWKS(RFC 7517) — WS 핸드셰이크 JWT 검증키 소스(ADR-0021 Q3). 기본 = 로컬 doc-service(8081).
+      # prod는 메시 내부 주소를 WEDOCS_GATEWAY_JWKS_URI로 주입(환경 분리, mTLS ztunnel 경유).
+      jwks-uri: ${WEDOCS_GATEWAY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+      # 발급자 — doc-service JwtProperties.issuer(기본 wedocs-doc-service)와 일치해야 검증 통과.
+      issuer: ${WEDOCS_GATEWAY_JWT_ISSUER:wedocs-doc-service}
+      # 클라이언트가 Sec-WebSocket-Protocol에 [subprotocol, <jwt>]로 싣고 서버가 이 값을 echo(ADR-0014).
+      subprotocol: wedocs.sync.v1
+      # exp 검증 허용 오차(서버-발급자 시계 오차 흡수).
+      clock-skew: 60s
+
+# 관측(ADR-0021 §관측 계약) — 핸드셰이크/검증/JWKS 메트릭을 Prometheus로 노출(앱 계측 + L7 상태코드 이중).
+# 최소 노출(health, prometheus)만 — 나머지 액추에이터 엔드포인트는 기본대로 비공개(secure-coding.md, 공격 표면 최소).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
