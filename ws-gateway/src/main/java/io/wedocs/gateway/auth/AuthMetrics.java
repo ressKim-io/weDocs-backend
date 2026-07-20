@@ -3,6 +3,8 @@ package io.wedocs.gateway.auth;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+
 /// WS 핸드셰이크 인증 관측 메트릭 (ADR-0021 §관측 계약, MANDATORY). Micrometer 카운터를 의미 단위 메서드로
 /// 캡슐화한다(Tell-Don't-Ask) — 호출부는 메트릭 이름·태그 규칙을 몰라도 결과만 알린다. 카운터 base name은
 /// dot 표기(`ws.handshake`)이고 Prometheus 렌더링 시 underscore + `_total` 접미가 붙어 계약 이름
@@ -13,11 +15,17 @@ public class AuthMetrics {
     /// result 태그 값 — 인터셉터·retriever·테스트가 공유(리터럴 드리프트 방지).
     public static final String RESULT_OK = "ok";
     public static final String RESULT_AUTHN_FAIL = "authn_fail";
+    /// 인가 거부(권한 없음) — 정상 동작이다. 백엔드 장애와 구분해야 대시보드에서 장애가 묻히지 않는다.
+    public static final String RESULT_AUTHZ_DENIED = "authz_denied";
+    /// 인가 백엔드(doc-service) 불가로 fail-closed 거절 — 전 연결에 영향, 알림 후보(ADR-0021).
+    public static final String RESULT_BACKEND_ERROR = "backend_error";
     public static final String RESULT_FAIL = "fail";
 
     static final String HANDSHAKE = "ws.handshake";     // → ws_handshake_total
     static final String JWT_VERIFY = "jwt.verify";       // → jwt_verify_total
     static final String JWKS_REFRESH = "jwks.refresh";   // → jwks_refresh_total
+    static final String CHECK_PERMISSION = "checkpermission.duration";  // → checkpermission_duration_seconds
+    static final String AUTHZ_BACKEND_ERROR = "authz.backend.error";     // → authz_backend_error_total
 
     private static final String TAG_RESULT = "result";
 
@@ -27,9 +35,21 @@ public class AuthMetrics {
         this.registry = registry;
     }
 
-    /// 핸드셰이크 최종 판정 1건 — result=ok|authn_fail. authz_denied·backend_error는 인가 슬라이스(2a-2)에서 추가된다.
+    /// 핸드셰이크 최종 판정 1건 — result=ok|authn_fail|authz_denied|backend_error.
     public void handshake(String result) {
         registry.counter(HANDSHAKE, TAG_RESULT, result).increment();
+    }
+
+    /// `CheckPermission` 왕복 1건의 소요시간. 인가가 핸드셰이크 경로에 들어왔으므로 이 지연이 곧 연결 지연이다 —
+    /// deadline(설정값) 대비 실제 분포를 봐야 timeout을 근거 있게 조정할 수 있다(ADR-0021).
+    /// 성공·거부·장애를 모두 기록한다: 장애 시 "느려서 죽었는지 즉시 죽었는지"가 진단의 갈림길이라서.
+    public void checkPermission(Duration elapsed) {
+        registry.timer(CHECK_PERMISSION).record(elapsed);
+    }
+
+    /// 인가 백엔드 불가로 연결을 거절한 1건. **0보다 크면 장애**(fail-closed가 전 연결을 막는 중) → M5 page 알림 후보.
+    public void authzBackendError() {
+        registry.counter(AUTHZ_BACKEND_ERROR).increment();
     }
 
     /// 토큰이 제시된 검증 시도 1건 — result=ok|fail. 무토큰은 검증 시도가 아니므로 세지 않는다(핸드셰이크 authn_fail만).

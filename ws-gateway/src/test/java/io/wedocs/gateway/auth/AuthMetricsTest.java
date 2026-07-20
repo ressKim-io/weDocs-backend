@@ -5,6 +5,8 @@ import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// 관측 계약 회귀 가드 (ADR-0021). Micrometer base name(dot)이 Prometheus에서 underscore + `_total`로 렌더링돼
@@ -35,5 +37,28 @@ class AuthMetricsTest {
                 .contains("jwt_verify_total{result=\"fail\"}")
                 .contains("jwks_refresh_total{result=\"ok\"}")
                 .contains("jwks_refresh_total{result=\"fail\"}");
+    }
+
+    @Test
+    @DisplayName("인가 메트릭이 계약 이름으로 노출된다(authz_denied·backend_error·checkpermission_duration·authz_backend_error_total)")
+    void authzMetrics_renderWithContractNames() {
+        // Given
+        PrometheusMeterRegistry registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AuthMetrics metrics = new AuthMetrics(registry);
+
+        // When: 인가 슬라이스(2a-2)가 추가한 결과 경로를 발화
+        metrics.handshake(AuthMetrics.RESULT_AUTHZ_DENIED);
+        metrics.handshake(AuthMetrics.RESULT_BACKEND_ERROR);
+        metrics.checkPermission(Duration.ofMillis(12));
+        metrics.authzBackendError();
+        String scrape = registry.scrape();
+
+        // Then: 2a-1이 세운 ws_handshake_total 계약을 태그값으로 연장하고, 신규 계기는 계약 이름 그대로.
+        // Timer는 Prometheus에서 초 단위 `_seconds` 접미로 렌더링된다 — 대시보드 쿼리가 이 이름에 걸린다.
+        assertThat(scrape)
+                .contains("ws_handshake_total{result=\"authz_denied\"}")
+                .contains("ws_handshake_total{result=\"backend_error\"}")
+                .contains("checkpermission_duration_seconds_count")
+                .contains("authz_backend_error_total");
     }
 }

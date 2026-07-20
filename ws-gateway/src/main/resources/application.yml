@@ -11,6 +11,13 @@ server:
 wedocs:
   engine:
     target: localhost:50051   # crdt-engine gRPC (bidi Sync)
+  doc-service:
+    # WS 핸드셰이크 인가(CheckPermission)의 권위(ADR-0014). 기본 = 로컬 doc-service gRPC(50052).
+    # prod는 메시 내부 주소를 WEDOCS_DOC_SERVICE_TARGET으로 주입(환경 분리, mTLS ztunnel 경유).
+    target: ${WEDOCS_DOC_SERVICE_TARGET:localhost:50052}
+    # CheckPermission deadline — 핸드셰이크를 붙잡는 호출이라 상한이 곧 연결 지연의 상한이다.
+    # 초과 시 fail-closed 거절(403) + authz_backend_error_total 발화.
+    check-permission-timeout: 2s
   gateway:
     # WS Origin 화이트리스트(secure-coding.md P5) — 콤마 구분. 기본 = vite dev(5173).
     # prod Origin은 WEDOCS_GATEWAY_ALLOWED_ORIGINS로 주입(환경 분리, "*" 금지).
