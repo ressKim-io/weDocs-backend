@@ -22,6 +22,12 @@ public class EngineClient {
     private static final Metadata.Key<String> DOC_ID_KEY =
             Metadata.Key.of("doc-id", Metadata.ASCII_STRING_MARSHALLER);
 
+    /// 게이트웨이가 판정한 세션 권한(viewer|editor). 엔진은 이 값으로 viewer 스트림의 write를 최종 거부한다
+    /// (다층 방어 D-5 — 2b에서 강제. 그 전까지 엔진은 이 헤더를 무시하므로 전달만으로 회귀가 없다).
+    /// doc-id와 같은 open-time 메타데이터 채널을 쓴다 — **proto 무변경**(ADR-0011 결정4).
+    private static final Metadata.Key<String> ROLE_KEY =
+            Metadata.Key.of("role", Metadata.ASCII_STRING_MARSHALLER);
+
     private final ManagedChannel channel;
     private final CrdtEngineGrpc.CrdtEngineStub asyncStub;
 
@@ -41,12 +47,17 @@ public class EngineClient {
         this.asyncStub = CrdtEngineGrpc.newStub(channel);
     }
 
-    /// 한 WS 세션에 대응하는 bidi `Sync` 스트림을 연다. docId는 gRPC 메타데이터로 전달해
-    /// 엔진이 open 시점(첫 ClientFrame 도착 전)에 문서를 식별하게 한다 — chicken-egg 해소(§D-1).
+    /// 한 WS 세션에 대응하는 bidi `Sync` 스트림을 연다. docId·role은 gRPC 메타데이터로 전달해
+    /// 엔진이 open 시점(첫 ClientFrame 도착 전)에 문서와 권한을 알게 한다 — chicken-egg 해소(§D-1).
     /// 반환된 StreamObserver로 ClientFrame을 onNext 하면 엔진으로 전송된다.
-    public StreamObserver<ClientFrame> openSync(String docId, StreamObserver<ServerFrame> responseObserver) {
+    ///
+    /// role은 wire 문자열로 받는다 — 이 클라이언트가 세션 도메인 타입(`ws` 패키지)에 의존하면 `ws → grpc`
+    /// 방향과 맞물려 패키지 순환이 생긴다. 변환은 호출부(핸들러)가 경계에서 수행한다.
+    public StreamObserver<ClientFrame> openSync(
+            String docId, String role, StreamObserver<ServerFrame> responseObserver) {
         Metadata headers = new Metadata();
         headers.put(DOC_ID_KEY, docId);
+        headers.put(ROLE_KEY, role);
         return asyncStub
                 .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers))
                 .sync(responseObserver);

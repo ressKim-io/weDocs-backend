@@ -15,6 +15,7 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /// 브라우저 ↔ 엔진 브리지. WS 세션 하나당 엔진 `Sync` bidi 스트림 하나를 유지하며
@@ -29,25 +30,31 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(DocWebSocketHandler.class);
 
     private final EngineClient engineClient;
+    private final SessionMetrics sessionMetrics;
     private final YProtocolCodec codec = new YProtocolCodec();
     private final Map<String, SessionBridge> bridges = new ConcurrentHashMap<>();
 
-    public DocWebSocketHandler(EngineClient engineClient) {
+    public DocWebSocketHandler(EngineClient engineClient, SessionMetrics sessionMetrics) {
         this.engineClient = engineClient;
+        this.sessionMetrics = sessionMetrics;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        // room은 핸드셰이크 인터셉터가 업그레이드 전에 검증해 attribute로 넣었다(무효 room은 여기 도달 못 함).
+        // room·role은 핸드셰이크 인터셉터가 업그레이드 전에 검증해 attribute로 넣었다
+        // (무효 room=400 / 무인증=401 / 무권한=403은 여기 도달 못 함).
         RoomId roomId = (RoomId) session.getAttributes().get(RoomHandshakeInterceptor.ROOM_ATTRIBUTE);
-        if (roomId == null) { // 방어: 인터셉터 미배선 시에만 발생 — 안전하게 닫는다.
-            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("room not resolved"));
+        Optional<SessionRole> role = SessionRole.from(session.getAttributes());
+        if (roomId == null || role.isEmpty()) { // 방어: 인터셉터 미배선 시에만 발생 — 안전하게 닫는다.
+            // 권한을 모른 채 스트림을 열면 viewer가 editor로 취급된다 — 열지 않는 쪽이 안전하다(fail-closed).
+            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("session identity not resolved"));
             return;
         }
         StreamObserver<ServerFrame> toClient = engineResponseObserver(session, roomId);
         // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
-        StreamObserver<ClientFrame> toEngine = engineClient.openSync(roomId.value(), toClient);
-        bridges.put(session.getId(), new SessionBridge(roomId, toEngine));
+        StreamObserver<ClientFrame> toEngine =
+                engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
+        bridges.put(session.getId(), new SessionBridge(roomId, role.get(), toEngine));
     }
 
     @Override
@@ -59,6 +66,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         bridges.computeIfPresent(session.getId(), (id, bridge) -> {
             try {
                 codec.decodeInbound(payload, bridge.room().value())
+                        .filter(frame -> isPermitted(frame, bridge, id))
                         .ifPresent(bridge.toEngine()::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
@@ -80,6 +88,22 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         // 전송 오류 뒤에는 afterConnectionClosed가 이어져 정리하므로 여기선 로깅만.
         log.warn("ws transport error session={}", session.getId(), exception);
+    }
+
+    /// viewer 세션이 보낸 쓰기 프레임을 엔진에 넘기지 않는다 — 인가 결정(ADR-0014)의 1차 집행이다.
+    /// 최종 방어선은 엔진(2b): 게이트웨이를 우회한 직접 gRPC는 여기로 오지 않으므로 이 층만으로는 부족하다(D-5).
+    ///
+    /// "쓰기"의 판정은 update 페이로드 유무다. `ClientFrame`은 proto3 plain bytes라 presence가 없고
+    /// (`hasUpdate()` 없음), 코덱이 SyncStep1은 state_vector에·Step2/Update는 update에 담는다. 빈 update는
+    /// 문서를 바꿀 수 없는 no-op이므로 이 판정이 실제 쓰기를 놓치는 경우는 없다. SyncStep1은 통과시켜야 한다 —
+    /// viewer도 초기 문서를 받으려면 state vector를 보내야 하기 때문(막으면 읽기 자체가 안 된다).
+    private boolean isPermitted(ClientFrame frame, SessionBridge bridge, String sessionId) {
+        if (bridge.role() != SessionRole.VIEWER || frame.getUpdate().isEmpty()) {
+            return true;
+        }
+        sessionMetrics.writeDropped();
+        log.debug("viewer write dropped session={} room={}", sessionId, bridge.room().value());
+        return false;
     }
 
     /// 엔진 → 브라우저 방향. 이 콜백만이 WS의 유일한 writer다(§D-6).
@@ -147,6 +171,6 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         }
     }
 
-    private record SessionBridge(RoomId room, StreamObserver<ClientFrame> toEngine) {
+    private record SessionBridge(RoomId room, SessionRole role, StreamObserver<ClientFrame> toEngine) {
     }
 }

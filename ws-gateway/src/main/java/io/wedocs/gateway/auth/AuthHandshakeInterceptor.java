@@ -4,7 +4,6 @@ import io.wedocs.gateway.ws.RoomHandshakeInterceptor;
 import io.wedocs.gateway.ws.RoomId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -14,10 +13,6 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,9 +33,6 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
     public static final String USER_ID_ATTRIBUTE = "wedocs.userId";
 
     private static final Logger log = LoggerFactory.getLogger(AuthHandshakeInterceptor.class);
-    /// OTel javaagent(Phase 4.2)가 채우는 MDC 키 — 미기동 환경에선 비어 "-"로 degrade(앱은 OTel API에 커플링되지 않는다).
-    private static final String TRACE_ID_MDC_KEY = "trace_id";
-    private static final String NONE = "-";
 
     /// before→afterHandshake는 같은 요청·같은 스레드의 두 콜백인데 afterHandshake엔 attributes 맵이 없다.
     /// 성공 ok-로그에 필요한 필드를 요청 스코프로 넘기는 표준 수단 = ThreadLocal. afterHandshake에서 항상 제거하고,
@@ -67,7 +59,7 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
         Optional<String> token = AuthSubprotocol.extractToken(requested);
         if (token.isEmpty()) {
             metrics.handshake(AuthMetrics.RESULT_AUTHN_FAIL);
-            return reject(response, docId, "no_token", NONE); // 검증 시도 자체가 없으므로 verify_ms 없음.
+            return reject(response, docId, "no_token", HandshakeLog.NONE); // 검증 시도 자체가 없으므로 verify_ms 없음.
         }
 
         long startNanos = System.nanoTime();
@@ -83,7 +75,7 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
         metrics.jwtVerify(AuthMetrics.RESULT_OK);
         attributes.put(USER_ID_ATTRIBUTE, userId.get());
         // ok 집계·로그는 afterHandshake에서(최종 성공 시) — Origin 등 auth 이후 거절을 ok로 오집계 방지(H-1).
-        PENDING.set(new PendingHandshake(docId, mask(userId.get()), verifyMs));
+        PENDING.set(new PendingHandshake(docId, HandshakeLog.mask(userId.get()), verifyMs));
         return true;
     }
 
@@ -104,14 +96,14 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
         }
         metrics.handshake(AuthMetrics.RESULT_OK);
         log.info("event=ws_handshake result=ok doc_id={} user={} verify_ms={} trace_id={}",
-                pending.docId(), pending.maskedUser(), pending.verifyMs(), traceId());
+                pending.docId(), pending.maskedUser(), pending.verifyMs(), HandshakeLog.traceId());
     }
 
     private boolean reject(ServerHttpResponse response, String docId, String reason, String verifyMs) {
         response.setStatusCode(HttpStatus.UNAUTHORIZED);
         // 토큰은 로깅하지 않는다(security.md) — 사유·doc_id·verify_ms·trace_id만. authn_fail은 access log의 401과 1:1 대응(ADR-0021).
         log.warn("event=ws_handshake result=authn_fail reason={} doc_id={} verify_ms={} trace_id={}",
-                reason, docId, verifyMs, traceId());
+                reason, docId, verifyMs, HandshakeLog.traceId());
         return false; // 업그레이드 전 거절 — 세션이 생성되지 않는다.
     }
 
@@ -124,24 +116,7 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
     /// room 인터셉터가 auth보다 먼저 실행돼(WebSocketConfig 순서) 검증된 RoomId를 넣어둔다 — 그 값을 재사용한다.
     /// attribute의 raw Object 캐스트는 소유자(RoomHandshakeInterceptor.roomId)에 캡슐화 — 여기선 RoomId만 다룬다.
     private static String docId(Map<String, Object> attributes) {
-        return RoomHandshakeInterceptor.roomId(attributes).map(RoomId::value).orElse(NONE);
-    }
-
-    /// 폴리글랏 단일 trace 상관용 trace_id(가드레일 4) — javaagent MDC에서 읽되, 없으면 "-"(앱 코드는 무영향).
-    private static String traceId() {
-        String traceId = MDC.get(TRACE_ID_MDC_KEY);
-        return (traceId != null && !traceId.isBlank()) ? traceId : NONE;
-    }
-
-    /// user_id를 로그에 원문/접두로 남기지 않는다(ADR-0021 "해시/미노출"). SHA-256 접두 hex만 남겨 같은 사용자
-    /// 핸드셰이크 상관은 유지하되, 다른 로그의 원문 user_id와 대조로 역식별되지 않게 한다(code-review M-2).
-    private static String mask(String userId) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(userId.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest, 0, 5); // 10 hex chars — 상관용 저충돌 접두.
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 must be available in a standard JRE", e);
-        }
+        return RoomHandshakeInterceptor.roomId(attributes).map(RoomId::value).orElse(HandshakeLog.NONE);
     }
 
     /// afterHandshake의 성공 로그에 필요한 요청 스코프 상태(before→after 전달용).
