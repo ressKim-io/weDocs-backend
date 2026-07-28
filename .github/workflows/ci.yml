@@ -1,0 +1,49 @@
+name: ci
+
+# 빌드·테스트 게이트. 이전까지 이 레포엔 security-scan·dependency-submission만 있어
+# Gradle 테스트가 CI에서 한 번도 돌지 않았다 — 빌드를 깨는 PR도 all-green으로 보였다
+# (controller docs/plans/2026-07-28-build-test-ci-gap.md).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # proto Java 스텁은 build/ 아래 생성물이라 gitignored — controller(SSOT)에서 생성해야
+  # 컴파일이 된다(ADR-0010 원격 git input).
+  # ⚠️ proto 계약이 바뀌면 이 ref를 bump해야 한다.
+  PROTO_REF: proto-v0.2.0
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # setup_only — proto 원본의 SSOT는 controller이므로 이 레포에서 lint/breaking을 돌리지 않는다.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      # buf.gen.yaml의 `inputs`(로컬 형제 경로 ../weDocs-controller/proto)를 CLI 인자로 덮어쓴다.
+      # `plugins:` 설정(출력 경로·protobuf/grpc 버전)은 그대로 쓰인다.
+      - name: Generate proto stubs
+        run: |
+          buf generate \
+            'https://github.com/ressKim-io/weDocs-controller.git#subdir=proto,ref=${{ env.PROTO_REF }}'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25" # 두 모듈 toolchain(JDK 25) 일치 — dependency-submission.yml과 같은 값
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # `build` = assemble + check(test). ws-gateway는 in-process fake라 Docker 불요,
+      # doc-service는 Testcontainers(Postgres)라 러너의 Docker 데몬을 쓴다.
+      # 테스트 datasource는 @ServiceConnection이 주입 —
+      # test/resources/application.yml이 main을 완전 대체하므로 SPRING_DATASOURCE_* env는 불요.
+      - run: ./gradlew build
