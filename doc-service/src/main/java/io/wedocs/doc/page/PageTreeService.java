@@ -86,9 +86,11 @@ public class PageTreeService {
         return pages.save(Page.create(workspaceId, parentId, title));
     }
 
-    public Page get(UUID actorId, UUID pageId) {
-        pageAccess.requireRead(pageId, actorId);
-        return loadPage(pageId);
+    /// 인가 관문이 이미 해석한 유효 권한을 페이지와 함께 돌려준다 — 호출자가 역할을 **다시 해석하지**
+    /// 않게 하기 위함이다(해석기는 `PermissionService` 단일 소유, gRPC `CheckPermission`과 같은 경로).
+    public PageView get(UUID actorId, UUID pageId) {
+        EffectivePermission permission = pageAccess.requireRead(pageId, actorId);
+        return new PageView(loadPage(pageId), permission);
     }
 
     @Transactional

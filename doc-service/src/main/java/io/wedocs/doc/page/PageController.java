@@ -35,9 +35,11 @@ public class PageController {
                 pageTree.create(userId, request.workspaceId(), request.parentId(), request.title()));
     }
 
+    /// 단건 조회만 호출자의 유효 권한(`myRole`·`canEdit`)을 함께 반환한다 — 목록은 행마다 해석하면
+    /// N+1이라 구조 필드까지만(`PageDetailResponse` 참조).
     @GetMapping("/api/pages/{pageId}")
-    public PageResponse get(@CurrentUserId UUID userId, @PathVariable UUID pageId) {
-        return PageResponse.from(pageTree.get(userId, pageId));
+    public PageDetailResponse get(@CurrentUserId UUID userId, @PathVariable UUID pageId) {
+        return PageDetailResponse.from(pageTree.get(userId, pageId));
     }
 
     @PatchMapping("/api/pages/{pageId}")

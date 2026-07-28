@@ -254,14 +254,6 @@ class PageSharingIntegrationTest extends RestTestSupport {
                 .andExpect(status().isNotFound());
     }
 
-    private ResultActions grant(AuthedUser actor, String pageId, UUID targetUserId,
-                                PagePermissionLevel level) throws Exception {
-        return mockMvc.perform(put("/api/pages/" + pageId + "/permissions/" + targetUserId)
-                .header("Authorization", actor.bearerToken())
-                .contentType("application/json")
-                .content(objectMapper.writeValueAsString(new PagePermissionRequest(level))));
-    }
-
     private ResultActions revoke(AuthedUser actor, String pageId, UUID targetUserId) throws Exception {
         return mockMvc.perform(delete("/api/pages/" + pageId + "/permissions/" + targetUserId)
                 .header("Authorization", actor.bearerToken()));
