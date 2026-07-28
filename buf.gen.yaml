@@ -3,10 +3,12 @@
 version: v2
 inputs:
   - directory: ../weDocs-controller/proto
-  # canonical(CI, 태그 핀):
+  # canonical(CI, 태그 핀) — .github/workflows/ci.yml이 이 input을 CLI 인자로 덮어쓴다:
+  #   buf generate 'https://github.com/ressKim-io/weDocs-controller.git#subdir=proto,ref=proto-v0.2.0'
+  # (아래 주석 형태로 여기 직접 적으면 로컬 개발도 원격을 타므로, 오버라이드 방식을 쓴다.)
   # - git_repo: https://github.com/ressKim-io/weDocs-controller.git
   #   subdir: proto
-  #   ref: proto-v0.1.0
+  #   ref: proto-v0.2.0
 plugins:
   # protobuf-java 4.34.1 런타임 대응
   - remote: buf.build/protocolbuffers/java:v34.1
