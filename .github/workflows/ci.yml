@@ -1,0 +1,31 @@
+name: ci
+
+# 빌드·테스트 게이트. 이전까지 이 레포엔 security-scan·dependency-submission만 있어
+# Gradle 테스트가 CI에서 한 번도 돌지 않았다 — 빌드를 깨는 PR도 all-green으로 보였다
+# (controller docs/plans/2026-07-28-build-test-ci-gap.md).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25" # 두 모듈 toolchain(JDK 25) 일치 — dependency-submission.yml과 같은 값
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # `build` = assemble + check(test). ws-gateway는 in-process fake라 Docker 불요,
+      # doc-service는 Testcontainers(Postgres)라 러너의 Docker 데몬을 쓴다.
+      # 테스트 datasource는 @ServiceConnection이 주입 —
+      # test/resources/application.yml이 main을 완전 대체하므로 SPRING_DATASOURCE_* env는 불요.
+      - run: ./gradlew build
