@@ -6,6 +6,8 @@ import tools.jackson.databind.ObjectMapper;
 import io.wedocs.doc.auth.LoginRequest;
 import io.wedocs.doc.workspace.MemberInviteRequest;
 import io.wedocs.doc.page.PageCreateRequest;
+import io.wedocs.doc.page.PagePermissionLevel;
+import io.wedocs.doc.page.PagePermissionRequest;
 import io.wedocs.doc.auth.SignupRequest;
 import io.wedocs.doc.workspace.WorkspaceCreateRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /// REST 통합 테스트 공통 헬퍼 — 컨텍스트 설정(@SpringBootTest·컨테이너)은 각 하위 클래스가 소유
@@ -71,6 +74,16 @@ public abstract class RestTestSupport {
                         .header("Authorization", actor.bearerToken()))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()).get("id").asString();
+    }
+
+    /// 공유 부여(PUT=UPSERT). 공유는 이제 sharing 테스트와 page 트리 테스트 양쪽에서 필요하다
+    /// (역할 노출 검증) — 사본을 만들지 않고 승격한다(`createPage` 승격과 같은 이유).
+    protected ResultActions grant(AuthedUser actor, String pageId, UUID targetUserId,
+                                  PagePermissionLevel level) throws Exception {
+        return mockMvc.perform(put("/api/pages/" + pageId + "/permissions/" + targetUserId)
+                .header("Authorization", actor.bearerToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new PagePermissionRequest(level))));
     }
 
     /// 초대는 성공·거부 단언이 테스트마다 달라 ResultActions를 그대로 돌려준다.

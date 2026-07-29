@@ -95,6 +95,68 @@ class PageTreeIntegrationTest extends RestTestSupport {
                 .andExpect(status().isNotFound());
     }
 
+    /// 단건 조회가 호출자의 유효 권한을 보고하는지 — 권한 해석의 네 갈래(워크스페이스 owner /
+    /// 워크스페이스 member baseline / 명시 공유 / 조상 상속)를 REST 표면에서 종단 검증한다.
+    ///
+    /// 왜 중요한가: 클라이언트는 이 값으로 편집 UI를 잠근다. 틀리면 viewer의 편집이 게이트웨이에서
+    /// drop되면서 로컬 CRDT 문서만 divergent해진다(조용한 유실).
+
+    @Test
+    @DisplayName("단건 조회 — 워크스페이스 owner는 myRole=OWNER·canEdit=true")
+    void getPage_reportsOwnerRole() throws Exception {
+        // Given
+        AuthedUser owner = signupAndLogin("owner");
+        String workspaceId = createWorkspace(owner);
+        String pageId = createPage(owner, workspaceId, null, "내 문서");
+
+        // When / Then
+        mockMvc.perform(get("/api/pages/" + pageId).header("Authorization", owner.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.myRole").value("OWNER"))
+                .andExpect(jsonPath("$.canEdit").value(true));
+    }
+
+    @Test
+    @DisplayName("단건 조회 — 워크스페이스 member는 baseline editor(myRole=EDITOR·canEdit=true)")
+    void getPage_reportsEditorRole_forWorkspaceMember() throws Exception {
+        // Given: 명시 공유 없이 워크스페이스 멤버로만 초대 — baseline(D-3) 경로를 탄다
+        AuthedUser owner = signupAndLogin("owner");
+        AuthedUser member = signupAndLogin("member");
+        String workspaceId = createWorkspace(owner);
+        String pageId = createPage(owner, workspaceId, null, "팀 문서");
+        invite(owner, workspaceId, member.email()).andExpect(status().isCreated());
+
+        // When / Then
+        mockMvc.perform(get("/api/pages/" + pageId).header("Authorization", member.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.myRole").value("EDITOR"))
+                .andExpect(jsonPath("$.canEdit").value(true));
+    }
+
+    @Test
+    @DisplayName("단건 조회 — viewer 공유는 myRole=VIEWER·canEdit=false, 자식 페이지도 상속한다")
+    void getPage_reportsViewerRole_explicitAndInherited() throws Exception {
+        // Given: 비멤버 guest에게 부모 페이지만 viewer로 공유 — 자식은 명시 권한 없이 상속으로 읽힌다
+        AuthedUser owner = signupAndLogin("owner");
+        AuthedUser guest = signupAndLogin("guest");
+        String workspaceId = createWorkspace(owner);
+        String parentId = createPage(owner, workspaceId, null, "공유 부모");
+        String childId = createPage(owner, workspaceId, parentId, "상속 자식");
+        grant(owner, parentId, guest.id(), PagePermissionLevel.VIEWER).andExpect(status().isNoContent());
+
+        // When / Then: 명시 공유된 부모
+        mockMvc.perform(get("/api/pages/" + parentId).header("Authorization", guest.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.myRole").value("VIEWER"))
+                .andExpect(jsonPath("$.canEdit").value(false));
+
+        // Then: 상속받은 자식도 동일 — 상속 경로에서 editor로 승격되지 않는다(over-grant 회귀 방지)
+        mockMvc.perform(get("/api/pages/" + childId).header("Authorization", guest.bearerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.myRole").value("VIEWER"))
+                .andExpect(jsonPath("$.canEdit").value(false));
+    }
+
     @Test
     @DisplayName("페이지 목록 — 멤버만, 아카이브 페이지는 제외된 평면 목록")
     void listPages_flatExcludingArchived() throws Exception {
