@@ -5,7 +5,7 @@ package io.wedocs.doc.common.error;
 /// HTTP 매핑은 GlobalExceptionHandler 한 곳(P1), gRPC 매핑은 DocServiceImpl 경계 한 곳.
 /// sealed로 카테고리 5종만 허용 — require() 검증을 우회하는 6번째 서브타입 신설을 컴파일러가 막는다(design-patterns P4).
 public abstract sealed class DomainException extends RuntimeException
-        permits NotFoundException, ConflictException, ForbiddenException, UnauthorizedException, InvariantViolationException {
+        permits NotFoundException, BadRequestException, ConflictException, ForbiddenException, UnauthorizedException, InvariantViolationException {
 
     private final DocErrorCode code;
 

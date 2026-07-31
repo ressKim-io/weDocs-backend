@@ -6,7 +6,9 @@ import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.auth.User;
 import io.wedocs.doc.auth.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,10 +16,15 @@ import java.util.List;
 import java.util.UUID;
 
 /// 워크스페이스 생성·목록·멤버 초대 (PRD §5 MLP). 초대는 owner 전용(PRD §4.3 멤버 관리 열).
+@Slf4j
 @RequiredArgsConstructor
 @Service
 @Transactional(readOnly = true)
 public class WorkspaceService {
+
+    /// 내 워크스페이스 목록 상한(secure-coding P2 무상한 조회 금지) — PageTreeService.MAX_PAGE_LIST과 대칭.
+    /// MLP 규모(사용자당 수십 워크스페이스)를 넉넉히 초과. 초과분은 잘린다.
+    static final int MAX_WORKSPACE_LIST = 100;
 
     private final WorkspaceRepository workspaces;
     private final WorkspaceMemberRepository members;
@@ -33,12 +40,14 @@ public class WorkspaceService {
         return workspace;
     }
 
-    /// 내 멤버십 기준 목록 — 멤버십 행 수 = 사용자당 소규모(자기 제한적)라 별도 cap 없이 허용.
-    /// secure-coding P2 예외 — 규모가 관측되면 Pageable 전환: retrofit plan P2 · SDD §15 M3 캡 정량화 트랙.
+    /// 내 멤버십 기준 목록 — 조회 상한 적용(secure-coding P2).
     public List<Workspace> listMine(UUID userId) {
-        List<UUID> workspaceIds = members.findById_UserId(userId).stream()
+        List<UUID> workspaceIds = members.findById_UserId(userId, Limit.of(MAX_WORKSPACE_LIST)).stream()
                 .map(WorkspaceMember::getWorkspaceId)
                 .toList();
+        if (workspaceIds.size() >= MAX_WORKSPACE_LIST) {
+            log.warn("listMine hit cap: userId={}, cap={}", userId, MAX_WORKSPACE_LIST);
+        }
         return workspaces.findAllById(workspaceIds);
     }
 

@@ -1,5 +1,6 @@
 package io.wedocs.doc.workspace;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -12,5 +13,5 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
     /// 복합키 derived query라 파싱 모호성을 없애는 쪽을 택함.
     Optional<WorkspaceMember> findById_WorkspaceIdAndId_UserId(UUID workspaceId, UUID userId);
 
-    List<WorkspaceMember> findById_UserId(UUID userId);
+    List<WorkspaceMember> findById_UserId(UUID userId, Limit limit);
 }
