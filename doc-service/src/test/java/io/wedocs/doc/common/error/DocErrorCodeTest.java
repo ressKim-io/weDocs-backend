@@ -50,6 +50,8 @@ class DocErrorCodeTest {
         assertThat(DocErrorCode.PAGE_CYCLE.http().value()).isEqualTo(409);
         assertThat(DocErrorCode.PAGE_DEPTH_CAP_EXCEEDED.http().value()).isEqualTo(409);
         assertThat(DocErrorCode.CROSS_WORKSPACE_PARENT.http().value()).isEqualTo(409);
+        assertThat(DocErrorCode.SNAPSHOT_TOO_LARGE.http().value()).isEqualTo(400);
+        assertThat(DocErrorCode.SNAPSHOT_CONFLICT.http().value()).isEqualTo(409);
         assertThat(DocErrorCode.INSUFFICIENT_PERMISSION.http().value()).isEqualTo(403);
         assertThat(DocErrorCode.INVALID_CREDENTIALS.http().value()).isEqualTo(401);
         assertThat(DocErrorCode.INVARIANT_BROKEN.http().value()).isEqualTo(500);
@@ -67,6 +69,8 @@ class DocErrorCodeTest {
         expected.put(DocErrorCode.PAGE_CYCLE, Status.Code.FAILED_PRECONDITION);
         expected.put(DocErrorCode.PAGE_DEPTH_CAP_EXCEEDED, Status.Code.FAILED_PRECONDITION);
         expected.put(DocErrorCode.CROSS_WORKSPACE_PARENT, Status.Code.FAILED_PRECONDITION);
+        expected.put(DocErrorCode.SNAPSHOT_TOO_LARGE, Status.Code.INVALID_ARGUMENT);
+        expected.put(DocErrorCode.SNAPSHOT_CONFLICT, Status.Code.ALREADY_EXISTS);
         expected.put(DocErrorCode.INSUFFICIENT_PERMISSION, Status.Code.PERMISSION_DENIED);
         expected.put(DocErrorCode.INVALID_CREDENTIALS, Status.Code.UNAUTHENTICATED);
         expected.put(DocErrorCode.INVARIANT_BROKEN, Status.Code.INTERNAL);

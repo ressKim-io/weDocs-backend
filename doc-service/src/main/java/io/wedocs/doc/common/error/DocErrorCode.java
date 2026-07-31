@@ -22,6 +22,9 @@ public enum DocErrorCode {
             Status.Code.FAILED_PRECONDITION),
     INSUFFICIENT_PERMISSION(
             Category.FORBIDDEN, "insufficient-permission", "insufficient permission", Status.Code.PERMISSION_DENIED),
+    SNAPSHOT_TOO_LARGE(Category.BAD_REQUEST, "snapshot-too-large", "snapshot exceeds size limit", Status.Code.INVALID_ARGUMENT),
+    SNAPSHOT_CONFLICT(
+            Category.CONFLICT, "snapshot-conflict", "snapshot version conflict", Status.Code.ALREADY_EXISTS),
     INVALID_CREDENTIALS(Category.UNAUTHORIZED, "invalid-credentials", "invalid credentials", Status.Code.UNAUTHENTICATED),
     INVARIANT_BROKEN(Category.INVARIANT, "invariant-broken", "unexpected error", Status.Code.INTERNAL);
 
@@ -68,6 +71,7 @@ public enum DocErrorCode {
     /// 코드-타입 정합을 강제한다(NotFoundException에 CONFLICT 코드를 실을 수 없게 — illegal state 방지).
     public enum Category {
         NOT_FOUND(HttpStatus.NOT_FOUND),
+        BAD_REQUEST(HttpStatus.BAD_REQUEST),
         CONFLICT(HttpStatus.CONFLICT),
         FORBIDDEN(HttpStatus.FORBIDDEN),
         UNAUTHORIZED(HttpStatus.UNAUTHORIZED),
