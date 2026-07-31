@@ -34,6 +34,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-validation")
 
+    // API 문서 자동 생성 (OpenAPI 3.1 + Swagger UI). Spring Boot 4.x 지원 = springdoc v3.x.
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
+
     // 스키마 권위 = Flyway. JPA(ddl-auto=validate)는 매핑 검증만.
     // Spring Boot 4.x: auto-config 모듈화 → flyway-core jar만으론 자동구성 안 됨, 전용 스타터 필요.
     implementation("org.springframework.boot:spring-boot-starter-flyway")

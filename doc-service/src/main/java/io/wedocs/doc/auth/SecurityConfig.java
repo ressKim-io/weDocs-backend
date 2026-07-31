@@ -32,6 +32,8 @@ class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**", "/.well-known/jwks.json").permitAll()
+                        // SpringDoc Swagger UI + API spec — 개발·검토용 공개. prod 비활성은 springdoc.swagger-ui.enabled=false.
+                        .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .anyRequest().authenticated())
                 // JwtDecoder 빈(JwtConfig, 메모리 공개키) 사용 — Bearer 토큰 자가 검증.
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
