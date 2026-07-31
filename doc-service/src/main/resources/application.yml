@@ -54,3 +54,12 @@ wedocs:
       issuer: wedocs-doc-service
     # CORS 화이트리스트(콤마 구분) — 기본 = vite dev(5173). prod 도메인은 M5에서 env 주입.
     cors-allowed-origins: ${WEDOCS_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+# SpringDoc OpenAPI — Swagger UI + spec 자동 생성.
+# prod에서는 env로 비활성화 가능(SPRINGDOC_SWAGGER_UI_ENABLED=false).
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
+  api-docs:
+    path: /v3/api-docs
