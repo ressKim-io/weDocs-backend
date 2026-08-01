@@ -1,5 +1,6 @@
 package io.wedocs.doc.page;
 
+import io.wedocs.doc.outbox.OutboxAppender;
 import io.wedocs.doc.workspace.WorkspaceAccessGuard;
 import io.wedocs.doc.common.error.ConflictException;
 import io.wedocs.doc.common.error.DocErrorCode;
@@ -36,6 +37,7 @@ public class PageTreeService {
     private final WorkspaceRepository workspaces;
     private final PageAccessGuard pageAccess;
     private final WorkspaceAccessGuard workspaceAccess;
+    private final OutboxAppender outbox;
     // 트랜잭션 공유 프록시 — move()의 락 후 L1 캐시 초기화(clear) 전용.
     private final EntityManager entityManager;
 
@@ -83,7 +85,14 @@ public class PageTreeService {
         } else {
             requireEditableParentIn(workspaceId, parentId, actorId);
         }
-        return pages.save(Page.create(workspaceId, parentId, title));
+        Page page = pages.save(Page.create(workspaceId, parentId, title));
+        outbox.append(page.getId(), "page.created",
+                """
+                {"workspaceId":"%s","parentId":%s,"title":"%s"}"""
+                        .formatted(workspaceId,
+                                parentId == null ? "null" : "\"" + parentId + "\"",
+                                escapeJson(title)));
+        return page;
     }
 
     /// 인가 관문이 이미 해석한 유효 권한을 페이지와 함께 돌려준다 — 호출자가 역할을 **다시 해석하지**
@@ -98,6 +107,9 @@ public class PageTreeService {
         pageAccess.requireEdit(pageId, actorId);
         Page page = loadPage(pageId);
         page.rename(title);
+        outbox.append(pageId, "page.renamed",
+                """
+                {"title":"%s"}""".formatted(escapeJson(title)));
         return page;
     }
 
@@ -131,6 +143,10 @@ public class PageTreeService {
             assertNoCycle(page.getId(), newParent);
         }
         page.moveTo(newParentId, position);
+        outbox.append(pageId, "page.moved",
+                """
+                {"parentId":%s,"position":%d}"""
+                        .formatted(newParentId == null ? "null" : "\"" + newParentId + "\"", position));
         return page;
     }
 
@@ -139,6 +155,7 @@ public class PageTreeService {
     public void archive(UUID actorId, UUID pageId) {
         pageAccess.requireEdit(pageId, actorId);
         loadPage(pageId).archive();
+        outbox.append(pageId, "page.archived", "{}");
     }
 
     /// 부모 자격 검증(생성·이동 공용): ≥editor + 대상 워크스페이스 소속.
@@ -175,5 +192,15 @@ public class PageTreeService {
 
     private Page loadPage(UUID pageId) {
         return pages.findById(pageId).orElseThrow(() -> new NotFoundException(DocErrorCode.PAGE_NOT_FOUND));
+    }
+
+    /// JSON 문자열 값에 들어가는 특수문자 이스케이프(최소). payload는 구조가 고정이라 전용 직렬화
+    /// 라이브러리(Jackson) 의존을 끌어오지 않는다 — M4 인덱서가 파싱할 때 표준 JSON이면 충분.
+    private static String escapeJson(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }
