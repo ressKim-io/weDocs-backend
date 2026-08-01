@@ -21,3 +21,8 @@ plugins:
     out: doc-service/build/generated/buf/java
   - remote: buf.build/grpc/java:v1.82.1
     out: doc-service/build/generated/buf/java
+  # gRPC API 문서 자동 생성 — Markdown 출력. `make proto-gen` 시 docs/proto/ 에 생성.
+  - remote: buf.build/community/pseudomuto-doc
+    out: docs/proto
+    opt:
+      - markdown,api.md
