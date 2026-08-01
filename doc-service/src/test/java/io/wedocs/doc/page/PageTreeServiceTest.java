@@ -1,5 +1,6 @@
 package io.wedocs.doc.page;
 
+import io.wedocs.doc.outbox.OutboxAppender;
 import io.wedocs.doc.workspace.WorkspaceAccessGuard;
 
 import io.wedocs.doc.common.error.ConflictException;
@@ -39,6 +40,7 @@ class PageTreeServiceTest {
     @Mock private WorkspaceRepository workspaces;
     @Mock private PageAccessGuard pageAccess;
     @Mock private WorkspaceAccessGuard workspaceAccess;
+    @Mock private OutboxAppender outbox;
     @Mock private EntityManager entityManager; // move()의 락 후 clear — 단위에선 no-op mock
 
     private PageTreeService service;
@@ -48,7 +50,7 @@ class PageTreeServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess, entityManager);
+        service = new PageTreeService(pages, workspaces, pageAccess, workspaceAccess, outbox, entityManager);
         // 인가 통과·워크스페이스 락 성공을 기본 전제로 — 개별 테스트가 관심사만 override.
         lenient().when(pageAccess.requireEdit(any(), any()))
                 .thenReturn(EffectivePermission.granted(EffectiveRole.EDITOR));
