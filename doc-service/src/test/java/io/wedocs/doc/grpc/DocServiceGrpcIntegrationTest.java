@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// M2 1b — DocService 4 RPC 전체 통합테스트. 실 Postgres(Testcontainers) + in-process gRPC
 /// (네트워크 없이 stub↔DocServiceImpl 빈 직결) — GrpcServerLifecycle의 실 TCP 포트는 쓰지 않는다
-/// (test/resources/application.yml의 grpc-enabled=false로 비활성화됨).
+/// (test/resources/application.yml의 grpc.enabled=false로 비활성화됨).
 /// PermissionService 알고리즘 자체(상속·우선순위 등)는 PermissionServiceTest가 이미 커버 —
 /// 여기서는 gRPC 경계(UUID 검증·Status 매핑·DB 왕복)만 검증한다.
 /// ⚠️ directExecutor() 필수 — 서버측 RPC 처리가 테스트 스레드 위에서 그대로 실행돼야

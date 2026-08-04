@@ -9,7 +9,6 @@ import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.CrdtEngineGrpc;
 import io.wedocs.proto.crdt.ServerFrame;
 import jakarta.annotation.PreDestroy;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
@@ -28,10 +27,17 @@ public class EngineClient {
     private static final Metadata.Key<String> ROLE_KEY =
             Metadata.Key.of("role", Metadata.ASCII_STRING_MARSHALLER);
 
+    /// gRPC keepAlive 핑 간격(초) — 장수명 bidi 스트림의 죽은 피어/네트워크 파티션 감지.
+    private static final long KEEP_ALIVE_TIME_SECONDS = 30;
+    /// keepAlive 핑 응답 대기 타임아웃(초).
+    private static final long KEEP_ALIVE_TIMEOUT_SECONDS = 10;
+    /// 채널 종료 대기 시간(초).
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 5;
+
     private final ManagedChannel channel;
     private final CrdtEngineGrpc.CrdtEngineStub asyncStub;
 
-    public EngineClient(@Value("${wedocs.engine.target:localhost:50051}") String target) {
+    public EngineClient(EngineProperties properties) {
         // 게이트웨이 자체는 JNI를 도입하지 않는다. grpc-netty-shaded의 네이티브 트랜스포트(JNI)는
         // Netty event loop(platform thread) 전용 — VT가 onNext를 호출해도 JNI를 직접 타지 않아 VT pinning 없음(가드레일 3).
         //
@@ -39,10 +45,10 @@ public class EngineClient {
         // 감지(엔진 서버측 http2 keepalive와 대칭). keepAliveWithoutCalls는 미설정(기본 false) — Sync가 항상 활성
         // call이라 call 중 keepalive로 충분하고, idle 커넥션에 불필요한 ping을 안 보내는 일반 gRPC 위생
         // (다른 gRPC 서버 구현과 통신 시 ping rate-limit 대비). 실패 시 채널은 grpc-java 기본 지수 백오프로 자동 재연결.
-        this.channel = ManagedChannelBuilder.forTarget(target)
+        this.channel = ManagedChannelBuilder.forTarget(properties.target())
                 .usePlaintext()
-                .keepAliveTime(30, TimeUnit.SECONDS)
-                .keepAliveTimeout(10, TimeUnit.SECONDS)
+                .keepAliveTime(KEEP_ALIVE_TIME_SECONDS, TimeUnit.SECONDS)
+                .keepAliveTimeout(KEEP_ALIVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .build();
         this.asyncStub = CrdtEngineGrpc.newStub(channel);
     }
@@ -65,6 +71,6 @@ public class EngineClient {
 
     @PreDestroy
     public void shutdown() throws InterruptedException {
-        channel.shutdown().awaitTermination(5, TimeUnit.SECONDS);
+        channel.shutdown().awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 }
