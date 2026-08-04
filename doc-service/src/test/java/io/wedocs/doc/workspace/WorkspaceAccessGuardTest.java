@@ -46,16 +46,27 @@ class WorkspaceAccessGuardTest {
     }
 
     @Test
-    @DisplayName("member는 requireMember 통과, requireOwner는 403")
-    void member_passesMember_butOwnerIsForbidden() {
+    @DisplayName("member는 requireMember 통과")
+    void member_passesMember() {
         // Given
         when(members.findById_WorkspaceIdAndId_UserId(workspaceId, userId))
                 .thenReturn(Optional.of(new WorkspaceMember(workspaceId, userId, WorkspaceRole.MEMBER)));
 
-        // When / Then: 멤버 확인은 통과
-        assertThat(guard.requireMember(workspaceId, userId).getRole()).isEqualTo(WorkspaceRole.MEMBER);
+        // When
+        WorkspaceMember result = guard.requireMember(workspaceId, userId);
 
-        // Then: owner 요구는 403 — 멤버는 워크스페이스 존재를 이미 알므로 404 비노출 불필요
+        // Then
+        assertThat(result.getRole()).isEqualTo(WorkspaceRole.MEMBER);
+    }
+
+    @Test
+    @DisplayName("member는 requireOwner 시 403 — 멤버는 워크스페이스 존재를 이미 알므로 404 비노출 불필요")
+    void member_ownerIsForbidden() {
+        // Given
+        when(members.findById_WorkspaceIdAndId_UserId(workspaceId, userId))
+                .thenReturn(Optional.of(new WorkspaceMember(workspaceId, userId, WorkspaceRole.MEMBER)));
+
+        // When / Then
         assertThatThrownBy(() -> guard.requireOwner(workspaceId, userId))
                 .isInstanceOf(ForbiddenException.class);
     }

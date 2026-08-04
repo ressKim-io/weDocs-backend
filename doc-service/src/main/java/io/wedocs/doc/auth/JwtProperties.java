@@ -1,5 +1,6 @@
 package io.wedocs.doc.auth;
 
+import io.wedocs.doc.common.error.InfraErrorCode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.util.StringUtils;
@@ -18,10 +19,10 @@ public record JwtProperties(
 
     public JwtProperties {
         if (ttl.isNegative() || ttl.isZero()) {
-            throw new IllegalArgumentException("jwt ttl must be positive");
+            throw new IllegalArgumentException(InfraErrorCode.JWT_TTL_MUST_BE_POSITIVE.message());
         }
         if (!StringUtils.hasText(issuer)) {
-            throw new IllegalArgumentException("jwt issuer must not be blank");
+            throw new IllegalArgumentException(InfraErrorCode.JWT_ISSUER_MUST_NOT_BE_BLANK.message());
         }
     }
 

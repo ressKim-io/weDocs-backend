@@ -23,6 +23,13 @@ public class DocServiceClient implements PermissionChecker {
 
     private static final Logger log = LoggerFactory.getLogger(DocServiceClient.class);
 
+    /// gRPC keepAlive 핑 간격(초) — 죽은 피어/네트워크 파티션 감지.
+    private static final long KEEP_ALIVE_TIME_SECONDS = 30;
+    /// keepAlive 핑 응답 대기 타임아웃(초).
+    private static final long KEEP_ALIVE_TIMEOUT_SECONDS = 10;
+    /// 채널 종료 대기 시간(초).
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 5;
+
     private final ManagedChannel channel;
     private final DocServiceGrpc.DocServiceBlockingStub blockingStub;
     private final long timeoutMillis;
@@ -33,8 +40,8 @@ public class DocServiceClient implements PermissionChecker {
         // 미설정(기본 false) — idle ping으로 서버 rate-limit을 건드리지 않는 일반 gRPC 위생.
         this.channel = ManagedChannelBuilder.forTarget(properties.target())
                 .usePlaintext()
-                .keepAliveTime(30, TimeUnit.SECONDS)
-                .keepAliveTimeout(10, TimeUnit.SECONDS)
+                .keepAliveTime(KEEP_ALIVE_TIME_SECONDS, TimeUnit.SECONDS)
+                .keepAliveTimeout(KEEP_ALIVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .build();
         this.blockingStub = DocServiceGrpc.newBlockingStub(channel);
         this.timeoutMillis = properties.checkPermissionTimeout().toMillis();
@@ -71,6 +78,6 @@ public class DocServiceClient implements PermissionChecker {
 
     @PreDestroy
     public void shutdown() throws InterruptedException {
-        channel.shutdown().awaitTermination(5, TimeUnit.SECONDS);
+        channel.shutdown().awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 }

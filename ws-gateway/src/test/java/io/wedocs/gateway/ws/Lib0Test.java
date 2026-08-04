@@ -104,7 +104,8 @@ class Lib0Test {
     void writeVarUint_rejectsNegative() {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         assertThatThrownBy(() -> Lib0.writeVarUint(out, -1))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ProtocolError.VAR_UINT_NEGATIVE.message() + (-1));
     }
 
     @Test
@@ -115,7 +116,8 @@ class Lib0Test {
 
         // When/Then
         assertThatThrownBy(decoder::readVarUint)
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ProtocolError.VAR_UINT_PREMATURE_END.message());
     }
 
     @Test
@@ -129,7 +131,8 @@ class Lib0Test {
 
         // When/Then
         assertThatThrownBy(decoder::readVarUint)
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ProtocolError.VAR_UINT_OVERFLOW.message());
     }
 
     @Test
@@ -140,6 +143,7 @@ class Lib0Test {
 
         // When/Then
         assertThatThrownBy(decoder::readVarUint8Array)
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(ProtocolError.VAR_BUFFER_LENGTH_EXCEEDED.format(5L, 2));
     }
 }

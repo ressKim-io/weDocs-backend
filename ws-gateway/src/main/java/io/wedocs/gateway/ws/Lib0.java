@@ -9,6 +9,9 @@ final class Lib0 {
 
     private static final int CONTINUATION_BIT = 0x80;
     private static final int LOW_7_BITS = 0x7F;
+    /// long(64비트)에서 varUint가 사용할 수 있는 최대 비트 시프트.
+    /// 63비트 이상 시프트하면 부호 비트에 닿아 양수를 보장할 수 없다.
+    private static final int MAX_VAR_UINT_SHIFT = 63;
 
     private Lib0() {
     }
@@ -16,7 +19,7 @@ final class Lib0 {
     /// unsigned LEB128: 하위 7비트씩 little-endian, 뒤 바이트가 남으면 MSB(0x80) 세팅.
     static void writeVarUint(ByteArrayOutputStream out, long value) {
         if (value < 0) {
-            throw new IllegalArgumentException("varUint는 음수를 표현하지 않는다: " + value);
+            throw new IllegalArgumentException(ProtocolError.VAR_UINT_NEGATIVE.message() + value);
         }
         long remaining = value;
         while (remaining > LOW_7_BITS) {
@@ -53,24 +56,24 @@ final class Lib0 {
             while (pos < buf.length) {
                 // shift=63 시점은 10번째 바이트의 첫 비트가 long 부호 비트(63)에 닿아 양수 보장 불가
                 // (상위 비트는 64를 넘어 소실) → 음수/손상값 반환 전에 차단(손상·악의 프레임).
-                if (shift >= 63) {
-                    throw new IllegalArgumentException("varUint 오버플로(>63비트)");
+                if (shift >= MAX_VAR_UINT_SHIFT) {
+                    throw new IllegalArgumentException(ProtocolError.VAR_UINT_OVERFLOW.message());
                 }
-                int b = buf[pos++] & 0xFF;
-                result |= (long) (b & LOW_7_BITS) << shift;
-                if ((b & CONTINUATION_BIT) == 0) {
+                int currentByte = buf[pos++] & 0xFF;
+                result |= (long) (currentByte & LOW_7_BITS) << shift;
+                if ((currentByte & CONTINUATION_BIT) == 0) {
                     return result;
                 }
                 shift += 7;
             }
-            throw new IllegalArgumentException("varUint 디코드 중 입력이 조기 종료됨");
+            throw new IllegalArgumentException(ProtocolError.VAR_UINT_PREMATURE_END.message());
         }
 
         byte[] readVarUint8Array() {
             long len = readVarUint();
             int remaining = buf.length - pos;
             if (len > remaining) {
-                throw new IllegalArgumentException("varBuffer 길이가 남은 바이트를 초과: len=" + len + " remaining=" + remaining);
+                throw new IllegalArgumentException(ProtocolError.VAR_BUFFER_LENGTH_EXCEEDED.format(len, remaining));
             }
             byte[] payload = new byte[(int) len];
             System.arraycopy(buf, pos, payload, 0, (int) len);

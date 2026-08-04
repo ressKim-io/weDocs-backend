@@ -3,6 +3,7 @@ package io.wedocs.doc.auth;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
+import io.wedocs.doc.common.error.InfraErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 
@@ -49,7 +50,7 @@ public class JwtKeys {
         try {
             return rsaKey.toRSAPublicKey();
         } catch (JOSEException e) {
-            throw new IllegalStateException("jwt public key conversion failed", e);
+            throw new IllegalStateException(InfraErrorCode.JWT_PUBLIC_KEY_CONVERSION_FAILED.message(), e);
         }
     }
 
@@ -72,8 +73,7 @@ public class JwtKeys {
             // 잘못된 키로 조용히 기동하는 것보다 즉시 실패가 안전(fail-fast) — 원인 체인 보존(P4).
             // PKCS#1("BEGIN RSA PRIVATE KEY") 오배포가 흔한 운영 실수라 기대 형식을 메시지에 명시.
             throw new IllegalStateException(
-                    "jwt private key load failed (expected PKCS#8 PEM: '-----BEGIN PRIVATE KEY-----'): "
-                            + location.getDescription(), e);
+                    InfraErrorCode.JWT_KEY_LOAD_FAILED.format(location.getDescription()), e);
         }
     }
 
@@ -89,7 +89,7 @@ public class JwtKeys {
             return withThumbprintKid(
                     new RSAKey.Builder((RSAPublicKey) pair.getPublic()).privateKey(pair.getPrivate()).build());
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("RSA key generation unavailable", e);
+            throw new IllegalStateException(InfraErrorCode.RSA_KEY_GENERATION_UNAVAILABLE.message(), e);
         }
     }
 
@@ -98,7 +98,7 @@ public class JwtKeys {
         try {
             return new RSAKey.Builder(key).keyID(key.computeThumbprint().toString()).build();
         } catch (JOSEException e) {
-            throw new IllegalStateException("jwt kid(thumbprint) computation failed", e);
+            throw new IllegalStateException(InfraErrorCode.JWT_KID_COMPUTATION_FAILED.message(), e);
         }
     }
 }

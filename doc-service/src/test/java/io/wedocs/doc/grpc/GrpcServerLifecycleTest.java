@@ -21,11 +21,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// in-process 테스트(DocServiceGrpcIntegrationTest)가 커버하지 못하는 "실제 ServerBuilder 배선
-/// 자체"를 증명하는 얇은 스모크 테스트. grpc-port=0(OS 할당)으로 다른 테스트/로컬 bootRun과의
+/// 자체"를 증명하는 얇은 스모크 테스트. grpc.port=0(OS 할당)으로 다른 테스트/로컬 bootRun과의
 /// 포트 충돌을 피한다.
 @SpringBootTest(properties = {
-        "wedocs.doc-service.grpc-enabled=true",
-        "wedocs.doc-service.grpc-port=0"
+        "wedocs.doc-service.grpc.enabled=true",
+        "wedocs.doc-service.grpc.port=0"
 })
 @Testcontainers
 class GrpcServerLifecycleTest {

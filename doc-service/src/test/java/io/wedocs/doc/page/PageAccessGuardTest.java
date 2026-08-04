@@ -46,30 +46,57 @@ class PageAccessGuardTest {
     }
 
     @Test
-    @DisplayName("viewer는 requireRead 통과, requireEdit는 403")
-    void viewer_passesRead_butEditIsForbidden() {
+    @DisplayName("viewer는 requireRead 통과")
+    void viewer_passesRead() {
         // Given
         when(permissions.resolve(pageId, userId))
                 .thenReturn(EffectivePermission.granted(EffectiveRole.VIEWER));
 
-        // When / Then: 읽기는 통과
-        assertThat(guard.requireRead(pageId, userId).role()).isEqualTo(EffectiveRole.VIEWER);
+        // When
+        EffectivePermission result = guard.requireRead(pageId, userId);
 
-        // Then: 편집은 403 — 읽기를 통과한 사용자는 존재를 이미 알므로 404 비노출 불필요
+        // Then
+        assertThat(result.role()).isEqualTo(EffectiveRole.VIEWER);
+    }
+
+    @Test
+    @DisplayName("viewer는 requireEdit 시 403 — 읽기를 통과한 사용자는 존재를 이미 알므로 404 비노출 불필요")
+    void viewer_editIsForbidden() {
+        // Given
+        when(permissions.resolve(pageId, userId))
+                .thenReturn(EffectivePermission.granted(EffectiveRole.VIEWER));
+
+        // When / Then
         assertThatThrownBy(() -> guard.requireEdit(pageId, userId))
                 .isInstanceOf(ForbiddenException.class);
     }
 
     @Test
-    @DisplayName("editor와 workspace owner는 requireEdit 통과")
-    void editorAndOwner_passEdit() {
-        for (EffectiveRole role : new EffectiveRole[] {EffectiveRole.EDITOR, EffectiveRole.OWNER}) {
-            // Given
-            when(permissions.resolve(pageId, userId)).thenReturn(EffectivePermission.granted(role));
+    @DisplayName("editor는 requireEdit 통과")
+    void editor_passesEdit() {
+        // Given
+        when(permissions.resolve(pageId, userId))
+                .thenReturn(EffectivePermission.granted(EffectiveRole.EDITOR));
 
-            // When / Then
-            assertThat(guard.requireEdit(pageId, userId).role()).isEqualTo(role);
-        }
+        // When
+        EffectivePermission result = guard.requireEdit(pageId, userId);
+
+        // Then
+        assertThat(result.role()).isEqualTo(EffectiveRole.EDITOR);
+    }
+
+    @Test
+    @DisplayName("owner는 requireEdit 통과")
+    void owner_passesEdit() {
+        // Given
+        when(permissions.resolve(pageId, userId))
+                .thenReturn(EffectivePermission.granted(EffectiveRole.OWNER));
+
+        // When
+        EffectivePermission result = guard.requireEdit(pageId, userId);
+
+        // Then
+        assertThat(result.role()).isEqualTo(EffectiveRole.OWNER);
     }
 
     @Test

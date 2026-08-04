@@ -7,4 +7,9 @@ public final class NotFoundException extends DomainException {
     public NotFoundException(DocErrorCode code) {
         super(require(code, DocErrorCode.Category.NOT_FOUND));
     }
+
+    /// 제약 위반(FK 등)의 원인 체인 보존용(error-handling P4).
+    public NotFoundException(DocErrorCode code, Throwable cause) {
+        super(require(code, DocErrorCode.Category.NOT_FOUND), cause);
+    }
 }

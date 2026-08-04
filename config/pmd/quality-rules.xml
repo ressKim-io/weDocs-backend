@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<ruleset name="weDocs Quality Rules"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
+                             https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+    <description>
+        weDocs 프로젝트 코드 품질 규칙셋.
+        Cognitive Complexity와 메서드 길이를 제한하여 가독성과 유지보수성을 보장한다.
+    </description>
+
+    <!-- Req 1.1: 메서드 Cognitive Complexity 상한 15 -->
+    <rule ref="category/java/design.xml/CognitiveComplexity">
+        <properties>
+            <property name="reportLevel" value="15"/>
+        </properties>
+    </rule>
+
+    <!-- Req 1.2: 메서드 길이 상한 50줄 (PMD 7에서 ExcessiveMethodLength 제거됨 → XPath 커스텀 규칙) -->
+    <rule name="ExcessiveMethodLength"
+          language="java"
+          message="메서드가 {0}줄입니다. 50줄 이하로 분리하세요."
+          class="net.sourceforge.pmd.lang.rule.xpath.XPathRule">
+        <description>
+            메서드 본문이 50줄을 초과하면 가독성이 저하된다.
+            메서드를 작은 단위로 분리하여 단일 책임 원칙을 지키도록 한다.
+        </description>
+        <priority>3</priority>
+        <properties>
+            <property name="xpath">
+                <value>
+<![CDATA[
+//MethodDeclaration[@EndLine - @BeginLine > 50]
+]]>
+                </value>
+            </property>
+        </properties>
+    </rule>
+
+    <!-- Req 12.2: 매직 넘버 탐지 — if 조건문 내 리터럴 사용 금지 -->
+    <rule ref="category/java/errorprone.xml/AvoidLiteralsInIfCondition">
+        <properties>
+            <!-- 0, 1, -1, 2는 관용적으로 허용 (빈 체크, 인덱스, 절반 분할 등) -->
+            <property name="ignoreMagicNumbers" value="-1,0,1,2"/>
+            <property name="ignoreExpressions" value="true"/>
+        </properties>
+    </rule>
+
+</ruleset>

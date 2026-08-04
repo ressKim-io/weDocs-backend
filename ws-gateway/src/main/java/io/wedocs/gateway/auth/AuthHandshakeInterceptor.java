@@ -1,7 +1,7 @@
 package io.wedocs.gateway.auth;
 
-import io.wedocs.gateway.ws.RoomHandshakeInterceptor;
-import io.wedocs.gateway.ws.RoomId;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -114,9 +114,9 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
     }
 
     /// room 인터셉터가 auth보다 먼저 실행돼(WebSocketConfig 순서) 검증된 RoomId를 넣어둔다 — 그 값을 재사용한다.
-    /// attribute의 raw Object 캐스트는 소유자(RoomHandshakeInterceptor.roomId)에 캡슐화 — 여기선 RoomId만 다룬다.
+    /// attribute의 raw Object 캐스트는 소유자(HandshakeAttributes.roomId)에 캡슐화 — 여기선 RoomId만 다룬다.
     private static String docId(Map<String, Object> attributes) {
-        return RoomHandshakeInterceptor.roomId(attributes).map(RoomId::value).orElse(HandshakeLog.NONE);
+        return HandshakeAttributes.roomId(attributes).map(RoomId::value).orElse(HandshakeLog.NONE);
     }
 
     /// afterHandshake의 성공 로그에 필요한 요청 스코프 상태(before→after 전달용).

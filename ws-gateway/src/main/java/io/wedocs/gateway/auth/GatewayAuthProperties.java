@@ -1,5 +1,6 @@
 package io.wedocs.gateway.auth;
 
+import io.wedocs.gateway.common.InfraErrorCode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.util.StringUtils;
@@ -18,16 +19,16 @@ public record GatewayAuthProperties(
 
     public GatewayAuthProperties {
         if (!StringUtils.hasText(jwksUri)) {
-            throw new IllegalArgumentException("wedocs.gateway.auth.jwks-uri must not be blank");
+            throw new IllegalArgumentException(InfraErrorCode.JWKS_URI_MUST_NOT_BE_BLANK.message());
         }
         if (!StringUtils.hasText(issuer)) {
-            throw new IllegalArgumentException("wedocs.gateway.auth.issuer must not be blank");
+            throw new IllegalArgumentException(InfraErrorCode.ISSUER_MUST_NOT_BE_BLANK.message());
         }
         if (!StringUtils.hasText(subprotocol)) {
-            throw new IllegalArgumentException("wedocs.gateway.auth.subprotocol must not be blank");
+            throw new IllegalArgumentException(InfraErrorCode.SUBPROTOCOL_MUST_NOT_BE_BLANK.message());
         }
         if (clockSkew.isNegative()) {
-            throw new IllegalArgumentException("wedocs.gateway.auth.clock-skew must not be negative");
+            throw new IllegalArgumentException(InfraErrorCode.CLOCK_SKEW_MUST_NOT_BE_NEGATIVE.message());
         }
     }
 }

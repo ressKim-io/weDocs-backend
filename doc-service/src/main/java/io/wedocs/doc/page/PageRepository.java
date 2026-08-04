@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.UUID;
 
+/// 페이지 엔티티 저장소 — 트리 조회·조작용 파생 쿼리를 제공한다.
 public interface PageRepository extends JpaRepository<Page, UUID> {
     /// 부모의 직속 자식 — 테스트 전용(트리 관계 검증). 프로덕션 트리 로드는 아래 상한 쿼리를 쓴다.
     List<Page> findByParentId(UUID parentId);

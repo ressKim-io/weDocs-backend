@@ -1,4 +1,4 @@
-package io.wedocs.gateway.ws;
+package io.wedocs.gateway.handshake;
 
 import java.util.Optional;
 
@@ -7,7 +7,7 @@ import java.util.Optional;
 /// 길이 1..=128 · 문자집합 [A-Za-z0-9_-]. 두 경계가 어긋나면 한쪽만 통과하는 room이 생겨 방어가 뚫린다.
 public record RoomId(String value) {
 
-    static final int MAX_LENGTH = 128;
+    public static final int MAX_LENGTH = 128;
 
     /// 불변식: 유효하지 않은 값으로는 인스턴스가 존재할 수 없다(직접 생성 방어). 정상 경로는 fromPathSegment.
     public RoomId {
@@ -17,7 +17,7 @@ public record RoomId(String value) {
     }
 
     /// URL 경로 세그먼트를 검증해 RoomId로. 위반(빈 값·길이 초과·불허 문자)이면 empty — 호출부가 세션을 닫는다.
-    static Optional<RoomId> fromPathSegment(String raw) {
+    public static Optional<RoomId> fromPathSegment(String raw) {
         return isValid(raw) ? Optional.of(new RoomId(raw)) : Optional.empty();
     }
 
@@ -26,12 +26,12 @@ public record RoomId(String value) {
             return false;
         }
         for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            boolean allowed = (c >= 'a' && c <= 'z')
-                    || (c >= 'A' && c <= 'Z')
-                    || (c >= '0' && c <= '9')
-                    || c == '-'
-                    || c == '_';
+            char ch = raw.charAt(i);
+            boolean allowed = (ch >= 'a' && ch <= 'z')
+                    || (ch >= 'A' && ch <= 'Z')
+                    || (ch >= '0' && ch <= '9')
+                    || ch == '-'
+                    || ch == '_';
             if (!allowed) {
                 return false;
             }

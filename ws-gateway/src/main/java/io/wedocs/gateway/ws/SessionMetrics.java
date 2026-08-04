@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 public class SessionMetrics {
 
     static final String WRITE_DROPPED = "ws.write.dropped";   // → ws_write_dropped_total
+    static final String SESSION_CLOSED = "ws.session.closed"; // → ws_session_closed_total
 
     private static final String TAG_REASON = "reason";
     private static final String REASON_VIEWER = "viewer";
@@ -24,5 +25,11 @@ public class SessionMetrics {
     /// "코드가 죽어 있다"가 겉으로 똑같다(secure-coding: 무신호 실패 금지).
     public void writeDropped() {
         registry.counter(WRITE_DROPPED, TAG_REASON, REASON_VIEWER).increment();
+    }
+
+    /// WS 세션이 종료된 1건 — 경로(정상 close, 전송 에러, 엔진 스트림 종료) 불문.
+    /// bridges.remove()가 일어날 때마다 호출되어야 한다. 미호출 시 세션 누수를 감지할 수 없다.
+    public void sessionClosed() {
+        registry.counter(SESSION_CLOSED).increment();
     }
 }

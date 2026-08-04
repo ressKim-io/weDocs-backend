@@ -1,9 +1,7 @@
 package io.wedocs.doc.grpc;
 
 import com.google.protobuf.ByteString;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import io.wedocs.doc.common.error.DocErrorCode;
 import io.wedocs.doc.common.error.DomainException;
 import io.wedocs.doc.page.DocMetaService;
 import io.wedocs.doc.page.DocMetaService.DocMetaView;
@@ -11,7 +9,6 @@ import io.wedocs.doc.page.EffectivePermission;
 import io.wedocs.doc.page.PermissionService;
 import io.wedocs.doc.snapshot.SnapshotService;
 import io.wedocs.doc.snapshot.SnapshotService.SnapshotView;
-import io.wedocs.proto.common.DocRef;
 import io.wedocs.proto.common.Role;
 import io.wedocs.proto.doc.CheckPermissionRequest;
 import io.wedocs.proto.doc.CheckPermissionResponse;
@@ -43,11 +40,11 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
     @Override
     public void checkPermission(
             CheckPermissionRequest request, StreamObserver<CheckPermissionResponse> responseObserver) {
-        UUID pageId = parseUuidOrFail(request.getDocId(), responseObserver);
+        UUID pageId = GrpcOps.parseUuid(request.getDocId(), responseObserver);
         if (pageId == null) {
             return;
         }
-        UUID userId = parseUuidOrFail(request.getUserId(), responseObserver);
+        UUID userId = GrpcOps.parseUuid(request.getUserId(), responseObserver);
         if (userId == null) {
             return;
         }
@@ -60,13 +57,13 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
                     .build());
             responseObserver.onCompleted();
         } catch (RuntimeException e) {
-            failInternal(responseObserver, "CheckPermission", e);
+            GrpcOps.handleInternalError(responseObserver, "CheckPermission", e);
         }
     }
 
     @Override
     public void saveSnapshot(SaveSnapshotRequest request, StreamObserver<SaveSnapshotResponse> responseObserver) {
-        UUID pageId = parseUuidOrFail(request.getDocId(), responseObserver);
+        UUID pageId = GrpcOps.parseUuid(request.getDocId(), responseObserver);
         if (pageId == null) {
             return;
         }
@@ -76,15 +73,15 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
             responseObserver.onNext(SaveSnapshotResponse.newBuilder().setVersion(version).build());
             responseObserver.onCompleted();
         } catch (DomainException e) {
-            failDomain(responseObserver, "SaveSnapshot", e);
+            GrpcOps.handleDomainError(responseObserver, "SaveSnapshot", e);
         } catch (RuntimeException e) {
-            failInternal(responseObserver, "SaveSnapshot", e);
+            GrpcOps.handleInternalError(responseObserver, "SaveSnapshot", e);
         }
     }
 
     @Override
     public void loadSnapshot(LoadSnapshotRequest request, StreamObserver<LoadSnapshotResponse> responseObserver) {
-        UUID pageId = parseUuidOrFail(request.getDocId(), responseObserver);
+        UUID pageId = GrpcOps.parseUuid(request.getDocId(), responseObserver);
         if (pageId == null) {
             return;
         }
@@ -97,13 +94,13 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
                     .build());
             responseObserver.onCompleted();
         } catch (RuntimeException e) {
-            failInternal(responseObserver, "LoadSnapshot", e);
+            GrpcOps.handleInternalError(responseObserver, "LoadSnapshot", e);
         }
     }
 
     @Override
-    public void getDocMeta(DocRef request, StreamObserver<DocMeta> responseObserver) {
-        UUID pageId = parseUuidOrFail(request.getDocId(), responseObserver);
+    public void getDocMeta(io.wedocs.proto.common.DocRef request, StreamObserver<DocMeta> responseObserver) {
+        UUID pageId = GrpcOps.parseUuid(request.getDocId(), responseObserver);
         if (pageId == null) {
             return;
         }
@@ -121,45 +118,10 @@ public class DocServiceImpl extends DocServiceGrpc.DocServiceImplBase {
                     .build());
             responseObserver.onCompleted();
         } catch (DomainException e) {
-            // 미존재(NOT_FOUND) + FK 불변식 위반(INVARIANT_BROKEN→INTERNAL, 정상 경로 도달 불가)
-            // 모두 카탈로그 코드의 gRPC 매핑으로 처리 — 내부 상세는 로그로만, 클라이언트엔 분류만(P4).
-            failDomain(responseObserver, "GetDocMeta", e);
+            GrpcOps.handleDomainError(responseObserver, "GetDocMeta", e);
         } catch (RuntimeException e) {
-            failInternal(responseObserver, "GetDocMeta", e);
+            GrpcOps.handleInternalError(responseObserver, "GetDocMeta", e);
         }
-    }
-
-    /// UUID.fromString의 원본 예외(원시 입력값 포함)를 캐치해 안전한 메시지로 재포장 — 클라이언트에는
-    /// 분류(code)만, 원인은 서버 로그에만(secure-coding.md P1/P4). gRPC 메타데이터·필드도 클라이언트
-    /// 통제 값이라 신뢰하지 않는다.
-    private static UUID parseUuidOrFail(String raw, StreamObserver<?> responseObserver) {
-        try {
-            return UUID.fromString(raw);
-        } catch (IllegalArgumentException e) {
-            log.warn("malformed id in DocService request, length={}", raw.length(), e);
-            responseObserver.onError(
-                    Status.INVALID_ARGUMENT.withDescription("malformed id").asRuntimeException());
-            return null;
-        }
-    }
-
-    /// 도메인 실패 → gRPC Status 매핑 한 곳(error-handling P1/P7) — 코드·description을 카탈로그에서 읽는다.
-    /// 5xx(불변식)는 내부 상세를 로그로만 남기고 클라이언트엔 고정 "internal error"(P4).
-    private static void failDomain(StreamObserver<?> responseObserver, String rpcName, DomainException e) {
-        DocErrorCode code = e.code();
-        if (code.isInternal()) {
-            log.error("{}: domain invariant broken code={}", rpcName, code.slug(), e);
-            responseObserver.onError(Status.INTERNAL.withDescription("internal error").asRuntimeException());
-            return;
-        }
-        log.warn("{}: {} ({})", rpcName, code.slug(), code.grpc());
-        responseObserver.onError(
-                Status.fromCode(code.grpc()).withDescription(code.message()).asRuntimeException());
-    }
-
-    private static void failInternal(StreamObserver<?> responseObserver, String rpcName, RuntimeException cause) {
-        log.error("{}: unexpected internal error", rpcName, cause);
-        responseObserver.onError(Status.INTERNAL.withDescription("internal error").asRuntimeException());
     }
 
     private static Role toProtoRole(EffectivePermission.EffectiveRole role) {

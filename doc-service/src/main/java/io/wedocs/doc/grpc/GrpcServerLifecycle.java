@@ -3,7 +3,6 @@ package io.wedocs.doc.grpc;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -20,10 +19,11 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class GrpcServerLifecycle implements SmartLifecycle {
 
+    /// gRPC 서버 우아한 종료 대기 시간(초).
+    private static final int SHUTDOWN_TIMEOUT_SECONDS = 5;
+
     private final DocServiceImpl docService;
-    private final int port;
-    private final boolean enabled;
-    private final int maxInboundMessageSize;
+    private final GrpcServerProperties properties;
 
     // I/O 바운드(DB) — CLAUDE.md 언어배정 원칙. application.yml의 spring.threads.virtual.enabled는
     // Tomcat 전용이라 수동 배선하는 이 gRPC 서버엔 자동 적용되지 않는다 — 명시 지정 필요.
@@ -32,36 +32,30 @@ public class GrpcServerLifecycle implements SmartLifecycle {
 
     private volatile Server server;
 
-    public GrpcServerLifecycle(
-            DocServiceImpl docService,
-            @Value("${wedocs.doc-service.grpc-port:50052}") int port,
-            @Value("${wedocs.doc-service.grpc-enabled:true}") boolean enabled,
-            @Value("${wedocs.doc-service.grpc-max-inbound-message-size:4194304}") int maxInboundMessageSize) {
+    public GrpcServerLifecycle(DocServiceImpl docService, GrpcServerProperties properties) {
         this.docService = docService;
-        this.port = port;
-        this.enabled = enabled;
-        this.maxInboundMessageSize = maxInboundMessageSize;
+        this.properties = properties;
     }
 
     @Override
     public void start() {
-        if (!enabled) {
-            log.info("doc-service gRPC 서버 비활성화(wedocs.doc-service.grpc-enabled=false)");
+        if (!properties.enabled()) {
+            log.info("doc-service gRPC 서버 비활성화(wedocs.doc-service.grpc.enabled=false)");
             return;
         }
         executor = Executors.newVirtualThreadPerTaskExecutor();
         try {
-            server = ServerBuilder.forPort(port)
+            server = ServerBuilder.forPort(properties.port())
                     .executor(executor)
                     // 명시 상한(런타임 기본값 암묵 의존 금지, secure-coding P2/P5).
                     // 근거: 페이지 CRDT 스냅샷(lib0 v1) 크기 — crdt-engine tonic 인바운드 한도(4MB)와 정합.
-                    .maxInboundMessageSize(maxInboundMessageSize)
+                    .maxInboundMessageSize(properties.maxInboundMessageSize())
                     .addService(docService)
                     .build()
                     .start();
             log.info("doc-service gRPC 서버 시작: port={}", server.getPort());
         } catch (IOException e) {
-            throw new IllegalStateException("gRPC 서버 시작 실패: port=" + port, e);
+            throw new IllegalStateException("gRPC 서버 시작 실패: port=" + properties.port(), e);
         }
     }
 
@@ -70,7 +64,7 @@ public class GrpcServerLifecycle implements SmartLifecycle {
         if (server != null) {
             server.shutdown();
             try {
-                if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
+                if (!server.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     server.shutdownNow();
                 }
             } catch (InterruptedException e) {

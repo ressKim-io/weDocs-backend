@@ -1,6 +1,6 @@
 package io.wedocs.doc.auth;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -21,6 +21,7 @@ import java.util.List;
 /// 기본 거부 + 명시 공개(인증·JWKS)만 예외 (secure-coding P3).
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(CorsProperties.class)
 class SecurityConfig {
 
     @Bean
@@ -47,12 +48,10 @@ class SecurityConfig {
     }
 
     @Bean
-    CorsConfigurationSource corsConfigurationSource(
-            // 환경별 override 가능(env WEDOCS_CORS_ALLOWED_ORIGINS) — jwt.private-key-location과 동일 패턴.
-            @Value("${wedocs.doc-service.cors-allowed-origins:http://localhost:5173}") List<String> allowedOrigins) {
+    CorsConfigurationSource corsConfigurationSource(CorsProperties corsProperties) {
         CorsConfiguration config = new CorsConfiguration();
         // 화이트리스트만 — `*` 금지(P5). 기본 = vite dev 서버(5173), prod 도메인은 M5 배포 값으로 주입.
-        config.setAllowedOrigins(allowedOrigins);
+        config.setAllowedOrigins(corsProperties.allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

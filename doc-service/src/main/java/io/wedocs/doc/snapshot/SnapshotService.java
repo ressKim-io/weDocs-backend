@@ -15,7 +15,7 @@ import java.util.UUID;
 /// CRDT 스냅샷 영속화 오케스트레이션 (ADR-0013: 엔진 push, version은 엔진이 권위).
 @RequiredArgsConstructor
 @Service
-@Transactional
+@Transactional(readOnly = true)
 public class SnapshotService {
 
     /// 스냅샷 blob 크기 상한(secure-coding P2) — gRPC 4MiB 프레임 한도 이하에서 명시적으로 자른다.
@@ -43,6 +43,7 @@ public class SnapshotService {
     /// FK 위반(페이지 부재)과 PK 경합(동시 삽입 레이스)은 둘 다 DataIntegrityViolationException이지만
     /// 의미가 다르다 — FK 위반은 영구 실패(엔진이 영속화를 끈다), PK 경합은 일시적이라 재시도 가능.
     /// 메시지 패턴으로 구분하되, 구분 불가 시 FK 위반(더 보수적)으로 처리한다(fail-closed).
+    @Transactional
     public long save(UUID pageId, byte[] snapshot, long version) {
         if (snapshot.length > MAX_SNAPSHOT_BYTES) {
             throw new BadRequestException(DocErrorCode.SNAPSHOT_TOO_LARGE);
@@ -54,7 +55,7 @@ public class SnapshotService {
                 throw new ConflictException(DocErrorCode.SNAPSHOT_CONFLICT, e);
             }
             // FK 위반(page 부재) 또는 구분 불가 — 보수적으로 영구 실패 취급
-            throw new NotFoundException(DocErrorCode.PAGE_NOT_FOUND);
+            throw new NotFoundException(DocErrorCode.PAGE_NOT_FOUND, e);
         }
         return version;
     }

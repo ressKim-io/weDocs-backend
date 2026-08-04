@@ -10,27 +10,46 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EffectivePermissionTest {
 
     @Test
-    @DisplayName("NONE은 읽기·편집 모두 불가")
-    void none_cannotReadNorEdit() {
-        assertThat(EffectivePermission.DENIED.canRead()).isFalse();
-        assertThat(EffectivePermission.DENIED.canEdit()).isFalse();
+    @DisplayName("DENIED — 읽기·편집 모두 불가")
+    void denied_cannotReadNorEdit() {
+        // Given
+        EffectivePermission denied = EffectivePermission.DENIED;
+
+        // When / Then
+        assertThat(denied.canRead()).isFalse();
+        assertThat(denied.canEdit()).isFalse();
     }
 
     @Test
-    @DisplayName("VIEWER는 읽기만 가능")
+    @DisplayName("VIEWER — 읽기만 가능, 편집 불가")
     void viewer_canOnlyRead() {
+        // Given
         EffectivePermission viewer = EffectivePermission.granted(EffectiveRole.VIEWER);
+
+        // When / Then
         assertThat(viewer.canRead()).isTrue();
         assertThat(viewer.canEdit()).isFalse();
     }
 
     @Test
-    @DisplayName("EDITOR와 OWNER는 읽기·편집 모두 가능")
-    void editorAndOwner_canReadAndEdit() {
-        for (EffectiveRole role : new EffectiveRole[] {EffectiveRole.EDITOR, EffectiveRole.OWNER}) {
-            EffectivePermission permission = EffectivePermission.granted(role);
-            assertThat(permission.canRead()).as("%s canRead", role).isTrue();
-            assertThat(permission.canEdit()).as("%s canEdit", role).isTrue();
-        }
+    @DisplayName("EDITOR — 읽기·편집 모두 가능")
+    void editor_canReadAndEdit() {
+        // Given
+        EffectivePermission editor = EffectivePermission.granted(EffectiveRole.EDITOR);
+
+        // When / Then
+        assertThat(editor.canRead()).isTrue();
+        assertThat(editor.canEdit()).isTrue();
+    }
+
+    @Test
+    @DisplayName("OWNER — 읽기·편집 모두 가능")
+    void owner_canReadAndEdit() {
+        // Given
+        EffectivePermission owner = EffectivePermission.granted(EffectiveRole.OWNER);
+
+        // When / Then
+        assertThat(owner.canRead()).isTrue();
+        assertThat(owner.canEdit()).isTrue();
     }
 }

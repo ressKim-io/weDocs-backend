@@ -1,5 +1,6 @@
 package io.wedocs.doc.auth;
 
+import io.wedocs.doc.common.error.InfraErrorCode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -59,9 +60,12 @@ class JwtKeysTest {
     void failsFast_onInvalidPem(@TempDir Path tempDir) throws Exception {
         Path pemFile = tempDir.resolve("broken.pem");
         Files.writeString(pemFile, "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----\n");
+        var resource = new FileSystemResource(pemFile);
 
-        assertThatThrownBy(() -> new JwtKeys(new FileSystemResource(pemFile)))
-                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> new JwtKeys(resource))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(InfraErrorCode.JWT_KEY_LOAD_FAILED.format(resource.getDescription()))
+                .hasCauseInstanceOf(Exception.class);
     }
 
     private static KeyPair generateRsa() throws Exception {

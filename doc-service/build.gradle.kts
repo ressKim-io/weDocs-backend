@@ -50,6 +50,7 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
     compileOnly("org.apache.tomcat:annotations-api:6.0.53") // grpc 생성 코드의 @Generated
 
+    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     // Boot 4.x: 테스트 슬라이스도 기술별 스타터로 분리 — @WebMvcTest는 starter-test에 없음(실측).
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
@@ -59,6 +60,8 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers-postgresql")
     // InProcessServerBuilder/InProcessChannelBuilder 전용 — grpc-core에 없고 별도 모듈로 분리되어 있음(실측 확인).
     testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
+    // jqwik: 속성 기반 테스트(property-based testing) 라이브러리 — JUnit Platform 엔진으로 동작.
+    testImplementation("net.jqwik:jqwik:1.9.3")
 }
 
 // buf 생성 stub(build/generated/buf/java)을 소스셋에 포함 — make proto-gen 으로 생성.

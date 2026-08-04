@@ -3,9 +3,9 @@ package io.wedocs.gateway.auth;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.wedocs.gateway.grpc.PermissionChecker;
 import io.wedocs.gateway.grpc.PermissionResult;
-import io.wedocs.gateway.ws.RoomHandshakeInterceptor;
-import io.wedocs.gateway.ws.RoomId;
-import io.wedocs.gateway.ws.SessionRole;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
+import io.wedocs.gateway.handshake.SessionRole;
 import io.wedocs.proto.common.Role;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -189,7 +189,7 @@ class AuthzHandshakeInterceptorTest {
 
     private static Handshake handshake(String docId, String userId) {
         Map<String, Object> attributes = new HashMap<>();
-        attributes.put(RoomHandshakeInterceptor.ROOM_ATTRIBUTE, new RoomId(docId));
+        attributes.put(HandshakeAttributes.ROOM_ATTRIBUTE, new RoomId(docId));
         attributes.put(AuthHandshakeInterceptor.USER_ID_ATTRIBUTE, userId);
         return new Handshake(attributes);
     }

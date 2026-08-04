@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+/// 로그인 요청 DTO — 이메일/비밀번호 기반 인증.
 public record LoginRequest(
         @NotBlank @Email @Size(max = 255) String email,
         @NotBlank @MaxUtf8Bytes(72) String password) {
