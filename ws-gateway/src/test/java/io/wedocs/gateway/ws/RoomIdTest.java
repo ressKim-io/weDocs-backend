@@ -1,5 +1,6 @@
 package io.wedocs.gateway.ws;
 
+import io.wedocs.gateway.handshake.RoomId;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

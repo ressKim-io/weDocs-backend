@@ -2,9 +2,9 @@ package io.wedocs.gateway.auth;
 
 import io.wedocs.gateway.grpc.PermissionChecker;
 import io.wedocs.gateway.grpc.PermissionResult;
-import io.wedocs.gateway.ws.RoomHandshakeInterceptor;
-import io.wedocs.gateway.ws.RoomId;
-import io.wedocs.gateway.ws.SessionRole;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
+import io.wedocs.gateway.handshake.SessionRole;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -49,7 +49,7 @@ public class AuthzHandshakeInterceptor implements HandshakeInterceptor {
             ServerHttpResponse response,
             WebSocketHandler wsHandler,
             Map<String, Object> attributes) {
-        Optional<String> docId = RoomHandshakeInterceptor.roomId(attributes).map(RoomId::value);
+        Optional<String> docId = HandshakeAttributes.roomId(attributes).map(RoomId::value);
         Optional<String> userId = userId(attributes);
         if (docId.isEmpty() || userId.isEmpty()) {
             // 방어: 선행 인터셉터가 배선되지 않은 경우에만 발생. 인가 근거가 없으므로 통과시키지 않는다.

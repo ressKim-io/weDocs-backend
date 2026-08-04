@@ -1,4 +1,4 @@
-package io.wedocs.gateway.ws;
+package io.wedocs.gateway.handshake;
 
 import io.wedocs.proto.common.Role;
 
@@ -11,7 +11,7 @@ import java.util.Optional;
 /// 외부 입력은 경계에서 검증 후 도메인 타입으로).
 ///
 /// attribute 키와 접근자를 이 타입이 소유하는 이유: 값을 넣는 쪽은 인가 인터셉터(`auth` 패키지), 꺼내는 쪽은
-/// 세션 핸들러(`ws` 패키지)라 어느 한쪽이 소유하면 패키지 순환이 생긴다(현행 의존 방향 = `auth → ws`).
+/// 세션 핸들러(`ws` 패키지)라 어느 한쪽이 소유하면 패키지 순환이 생긴다 — 공유 `handshake` 패키지에 배치해 해소.
 public enum SessionRole {
 
     /// 읽기 전용 — client→server update 프레임을 게이트웨이가 버린다(1차 방어). 엔진 방어는 2b.
@@ -32,7 +32,7 @@ public enum SessionRole {
         };
     }
 
-    /// 세션 attribute에서 role을 꺼낸다 — raw Object 캐스트를 이 한 곳에 캡슐화(`RoomHandshakeInterceptor.roomId`와 같은 패턴).
+    /// 세션 attribute에서 role을 꺼낸다 — raw Object 캐스트를 이 한 곳에 캡슐화(`HandshakeAttributes.roomId`와 같은 패턴).
     public static Optional<SessionRole> from(Map<String, Object> attributes) {
         return Optional.ofNullable(attributes.get(ATTRIBUTE))
                 .filter(SessionRole.class::isInstance)

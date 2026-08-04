@@ -12,8 +12,8 @@ import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import io.wedocs.gateway.ws.RoomHandshakeInterceptor;
-import io.wedocs.gateway.ws.RoomId;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -135,7 +135,7 @@ class AuthHandshakeInterceptorTest {
         MockHttpServletResponse servletResponse = new MockHttpServletResponse();
         ServerHttpResponse response = new ServletServerHttpResponse(servletResponse);
         Map<String, Object> attributes = new HashMap<>();
-        attributes.put(RoomHandshakeInterceptor.ROOM_ATTRIBUTE, new RoomId(ROOM));
+        attributes.put(HandshakeAttributes.ROOM_ATTRIBUTE, new RoomId(ROOM));
 
         boolean accepted = interceptor.beforeHandshake(request, response, null, attributes);
         return new Handshake(request, response, servletResponse, accepted, attributes);
