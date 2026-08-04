@@ -42,8 +42,25 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      # `build` = assemble + check(test). ws-gateway는 in-process fake라 Docker 불요,
+      # `build` = assemble + check(test + pmdMain + pmdTest + checkstyleMain + checkstyleTest).
+      # ws-gateway는 in-process fake라 Docker 불요,
       # doc-service는 Testcontainers(Postgres)라 러너의 Docker 데몬을 쓴다.
       # 테스트 datasource는 @ServiceConnection이 주입 —
       # test/resources/application.yml이 main을 완전 대체하므로 SPRING_DATASOURCE_* env는 불요.
+      #
+      # 정적 분석(ArchUnit, PMD, Checkstyle)은 ERROR 모드 — 위반 시 빌드 실패.
+      # 생성 코드(protobuf stubs)는 분석 대상에서 제외된다.
       - run: ./gradlew build
+
+      # 정적 분석 리포트를 Artifacts로 업로드 — PR 리뷰 시 확인 용이.
+      # build가 실패해도(테스트 실패 등) 리포트는 업로드한다.
+      - name: Upload static analysis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-analysis-reports
+          path: |
+            **/build/reports/pmd/
+            **/build/reports/checkstyle/
+          retention-days: 14
+          if-no-files-found: ignore
