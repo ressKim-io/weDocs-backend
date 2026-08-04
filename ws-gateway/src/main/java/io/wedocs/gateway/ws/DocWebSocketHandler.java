@@ -2,6 +2,9 @@ package io.wedocs.gateway.ws;
 
 import io.grpc.stub.StreamObserver;
 import io.wedocs.gateway.grpc.EngineClient;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
+import io.wedocs.gateway.handshake.SessionRole;
 import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.ServerFrame;
 import org.slf4j.Logger;
@@ -21,9 +24,23 @@ import java.util.concurrent.ConcurrentHashMap;
 /// 브라우저 ↔ 엔진 브리지. WS 세션 하나당 엔진 `Sync` bidi 스트림 하나를 유지하며
 /// y-websocket(바이너리) ↔ gRPC 프레임을 번역한다. (SSOT §C/§D)
 ///
+/// ## 동시성 계약 (Concurrency Contract)
+///
 /// **WS 단일 writer 불변식(§D-6)**: WS send는 gRPC 응답 StreamObserver(스트림당 serial 호출)에서만 한다.
 /// 인바운드 핸들러는 gRPC로 forward만 하고 WS로 직접 쓰지 않으므로 동시 send가 없다 — 한 세션에 writer는
 /// 응답 콜백 하나뿐이다. 위반 시 `ConcurrentWebSocketSessionDecorator`로 감싸야 한다.
+///
+/// **요청 StreamObserver(toEngine) 직렬화**:
+/// - `computeIfPresent`가 onNext와 onCompleted(bridges.remove)를 상호 배제한다
+/// - Spring WS 스펙이 세션당 단일 스레드 메시지 처리를 보장 → onNext 동시 호출 없음
+///
+/// **응답 StreamObserver(toClient) 직렬화**:
+/// - gRPC 런타임이 단일 observer에 대해 순차 호출을 보장(grpc-java 계약)
+/// - {@link SerializingStreamObserver}로 추가 감싸 이중 완료 방지 및 구현 버그 방어(defense-in-depth)
+///
+/// **ConcurrentHashMap 원자성**:
+/// - `bridges.remove()` — 여러 경로(afterConnectionClosed, handleTransportError, endSession)에서 호출되나
+///   ConcurrentHashMap.remove()가 원자적으로 null 반환하여 중복 정리를 방지
 @Component
 public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
@@ -43,26 +60,38 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) {
         // room·role은 핸드셰이크 인터셉터가 업그레이드 전에 검증해 attribute로 넣었다
         // (무효 room=400 / 무인증=401 / 무권한=403은 여기 도달 못 함).
-        RoomId roomId = (RoomId) session.getAttributes().get(RoomHandshakeInterceptor.ROOM_ATTRIBUTE);
+        RoomId roomId = (RoomId) session.getAttributes().get(HandshakeAttributes.ROOM_ATTRIBUTE);
         Optional<SessionRole> role = SessionRole.from(session.getAttributes());
         if (roomId == null || role.isEmpty()) { // 방어: 인터셉터 미배선 시에만 발생 — 안전하게 닫는다.
             // 권한을 모른 채 스트림을 열면 viewer가 editor로 취급된다 — 열지 않는 쪽이 안전하다(fail-closed).
             closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("session identity not resolved"));
             return;
         }
-        StreamObserver<ServerFrame> toClient = engineResponseObserver(session, roomId);
+        // SerializingStreamObserver로 감싸 gRPC 응답 콜백의 onNext/onError/onCompleted 직렬화를 강제한다.
+        // gRPC 런타임이 순차 호출을 보장하지만, 이중 완료 방지 및 구현 버그 방어를 위한 안전망(Req 11.2, 11.3).
+        StreamObserver<ServerFrame> toClient =
+                new SerializingStreamObserver<>(engineResponseObserver(session, roomId));
         // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
-        StreamObserver<ClientFrame> toEngine =
-                engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
-        bridges.put(session.getId(), new SessionBridge(roomId, role.get(), toEngine));
+        try {
+            StreamObserver<ClientFrame> toEngine =
+                    engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
+            bridges.put(session.getId(), new SessionBridge(roomId, role.get(), toEngine));
+        } catch (RuntimeException e) {
+            // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
+            // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
+            log.error("engine stream open failed session={} room={}", session.getId(), roomId.value(), e);
+            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
+        }
     }
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         byte[] payload = toBytes(message.getPayload());
-        // get+onNext를 computeIfPresent로 원자화한다. ConcurrentHashMap의 키 단위 락이
-        // afterConnectionClosed/endSession의 remove와 상호 배제 → request StreamObserver에
-        // onNext와 onCompleted가 동시 호출되지 않음(grpc-java 계약: 동시 호출 금지). (§D-6 확장)
+        // [Req 11.2 원자성 보장] get+onNext를 computeIfPresent로 원자화한다.
+        // ConcurrentHashMap의 키 단위 락이 afterConnectionClosed/endSession의 remove와 상호 배제
+        // → request StreamObserver에 onNext와 onCompleted가 동시 호출되지 않음(grpc-java 계약: 동시 호출 금지).
+        // 이것이 non-atomic check-then-act를 방지하는 핵심 패턴이다: "브리지 존재 확인 → onNext 호출"을
+        // 단일 원자 연산으로 합쳐 remove와의 경합을 제거한다. (§D-6 확장)
         bridges.computeIfPresent(session.getId(), (id, bridge) -> {
             try {
                 codec.decodeInbound(payload, bridge.room().value())
@@ -80,14 +109,28 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         SessionBridge bridge = bridges.remove(session.getId());
         if (bridge != null) {
-            completeQuietly(bridge.toEngine()); // 클라가 떠났음을 엔진에 알림
+            try {
+                completeQuietly(bridge.toEngine()); // 클라가 떠났음을 엔진에 알림
+            } finally {
+                sessionMetrics.sessionClosed();
+            }
         }
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        // 전송 오류 뒤에는 afterConnectionClosed가 이어져 정리하므로 여기선 로깅만.
         log.warn("ws transport error session={}", session.getId(), exception);
+        // Spring 스펙상 afterConnectionClosed가 이어지지만, gRPC 엔진 스트림은 즉시 정리하여
+        // 전송 에러 이후 afterConnectionClosed 호출까지의 시간 동안 엔진이 끊긴 세션에
+        // 프레임을 보내는 것을 방지한다. bridges.remove()의 원자성이 이중 정리를 막는다.
+        SessionBridge bridge = bridges.remove(session.getId());
+        if (bridge != null) {
+            try {
+                completeQuietly(bridge.toEngine());
+            } finally {
+                sessionMetrics.sessionClosed();
+            }
+        }
     }
 
     /// viewer 세션이 보낸 쓰기 프레임을 엔진에 넘기지 않는다 — 인가 결정(ADR-0014)의 1차 집행이다.
@@ -140,10 +183,20 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// 제거에 성공하면 엔진 요청 스트림도 완료시킨다 — sendBinary 실패 경로에서 요청 스트림이 누수되지 않도록(이 정리 누락 시 엔진이 계속 onNext→재실패 반복).
     private void endSession(WebSocketSession session, CloseStatus status) {
         SessionBridge bridge = bridges.remove(session.getId());
-        if (bridge != null) {
-            completeQuietly(bridge.toEngine());
+        try {
+            if (bridge != null) {
+                completeQuietly(bridge.toEngine());
+            }
+        } finally {
+            // closeQuietly와 메트릭은 completeQuietly 예외(방어적)에 관계없이 실행되어야 한다.
+            try {
+                closeQuietly(session, status);
+            } finally {
+                if (bridge != null) {
+                    sessionMetrics.sessionClosed();
+                }
+            }
         }
-        closeQuietly(session, status);
     }
 
     private static byte[] toBytes(ByteBuffer buffer) {

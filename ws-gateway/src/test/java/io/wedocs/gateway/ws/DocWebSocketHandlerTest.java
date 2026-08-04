@@ -4,6 +4,10 @@ import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.wedocs.gateway.grpc.EngineClient;
+import io.wedocs.gateway.grpc.EngineProperties;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
+import io.wedocs.gateway.handshake.SessionRole;
 import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.ServerFrame;
 import org.junit.jupiter.api.BeforeEach;
@@ -98,7 +102,7 @@ class DocWebSocketHandlerTest {
     void missingRole_closesSessionWithoutOpeningStream() {
         // 권한을 모른 채 스트림을 열면 viewer가 editor로 취급된다 — 인터셉터 미배선 시의 안전망.
         StubSession session = new StubSession();
-        session.getAttributes().put(RoomHandshakeInterceptor.ROOM_ATTRIBUTE, new RoomId(roomUuid()));
+        session.getAttributes().put(HandshakeAttributes.ROOM_ATTRIBUTE, new RoomId(roomUuid()));
 
         handler.afterConnectionEstablished(session);
 
@@ -138,7 +142,7 @@ class DocWebSocketHandlerTest {
 
     private StubSession openSession(SessionRole role) {
         StubSession session = new StubSession();
-        session.getAttributes().put(RoomHandshakeInterceptor.ROOM_ATTRIBUTE, new RoomId(roomUuid()));
+        session.getAttributes().put(HandshakeAttributes.ROOM_ATTRIBUTE, new RoomId(roomUuid()));
         session.getAttributes().put(SessionRole.ATTRIBUTE, role);
         handler.afterConnectionEstablished(session);
         return session;
@@ -154,7 +158,7 @@ class DocWebSocketHandlerTest {
         private String role;
 
         private RecordingEngineClient() {
-            super("localhost:1"); // 연결하지 않는다 — openSync를 완전히 대체하므로 채널은 미사용.
+            super(new EngineProperties("localhost:1")); // 연결하지 않는다 — openSync를 완전히 대체하므로 채널은 미사용.
         }
 
         @Override
