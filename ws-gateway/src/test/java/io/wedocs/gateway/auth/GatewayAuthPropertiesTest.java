@@ -1,5 +1,6 @@
 package io.wedocs.gateway.auth;
 
+import io.wedocs.gateway.common.InfraErrorCode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -19,28 +20,32 @@ class GatewayAuthPropertiesTest {
     @DisplayName("jwks-uri가 blank면 기동 실패")
     void blankJwksUri_throws() {
         assertThatThrownBy(() -> new GatewayAuthProperties("  ", "wedocs-doc-service", "wedocs.sync.v1", SKEW))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(InfraErrorCode.JWKS_URI_MUST_NOT_BE_BLANK.message());
     }
 
     @Test
     @DisplayName("issuer가 blank면 기동 실패")
     void blankIssuer_throws() {
         assertThatThrownBy(() -> new GatewayAuthProperties(URI, "  ", "wedocs.sync.v1", SKEW))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(InfraErrorCode.ISSUER_MUST_NOT_BE_BLANK.message());
     }
 
     @Test
     @DisplayName("subprotocol이 blank면 기동 실패")
     void blankSubprotocol_throws() {
         assertThatThrownBy(() -> new GatewayAuthProperties(URI, "wedocs-doc-service", "  ", SKEW))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(InfraErrorCode.SUBPROTOCOL_MUST_NOT_BE_BLANK.message());
     }
 
     @Test
     @DisplayName("clock-skew가 음수면 기동 실패")
     void negativeClockSkew_throws() {
         assertThatThrownBy(() -> new GatewayAuthProperties(URI, "wedocs-doc-service", "wedocs.sync.v1", Duration.ofSeconds(-1)))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(InfraErrorCode.CLOCK_SKEW_MUST_NOT_BE_NEGATIVE.message());
     }
 
     @Test

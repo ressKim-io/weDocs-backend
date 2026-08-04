@@ -57,7 +57,7 @@ final class YProtocolCodec {
         boolean hasStateVector = !frame.getStateVector().isEmpty();
         boolean hasUpdate = !frame.getUpdate().isEmpty();
         if (hasStateVector && hasUpdate) {
-            log.warn("ServerFrame에 state_vector와 update가 모두 설정됨 — state_vector만 전송(update 드롭). 엔진 계약 위반?");
+            log.warn(ProtocolError.DUAL_FIELD_WARNING.message());
         }
         if (hasStateVector) {
             return Optional.of(syncMessage(SYNC_STEP1, frame.getStateVector()));
