@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Lock;
 import java.util.Optional;
 import java.util.UUID;
 
+/// 워크스페이스 엔티티 저장소 — 행 잠금 조회로 트리 이동 직렬화를 지원한다(ADR-0012).
 public interface WorkspaceRepository extends JpaRepository<Workspace, UUID> {
 
     /// 워크스페이스 행 SELECT ... FOR UPDATE — 페이지 트리 이동의 직렬화 락(ADR-0012).

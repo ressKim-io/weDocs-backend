@@ -5,6 +5,7 @@ import jakarta.validation.ConstraintValidatorContext;
 
 import java.nio.charset.StandardCharsets;
 
+/// UTF-8 바이트 길이 상한 검증기 — bcrypt 72바이트 제한 등 바이트 기준 제약에 사용한다.
 public class MaxUtf8BytesValidator implements ConstraintValidator<MaxUtf8Bytes, CharSequence> {
 
     private int maxBytes;

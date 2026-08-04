@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.UUID;
 
+/// 워크스페이스 CRUD 및 멤버 초대 REST 엔드포인트.
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/workspaces")

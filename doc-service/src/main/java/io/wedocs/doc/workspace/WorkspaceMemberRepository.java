@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/// 워크스페이스 멤버 복합키 저장소 — 멤버십 확인과 사용자별 워크스페이스 조회를 지원한다.
 public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember, WorkspaceMemberId> {
 
     /// 언더스코어(Id_WorkspaceId)로 @EmbeddedId 중첩 프로퍼티 경로를 명시 — 이 코드베이스 최초의

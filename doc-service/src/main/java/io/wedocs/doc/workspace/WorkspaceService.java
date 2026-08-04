@@ -48,7 +48,7 @@ public class WorkspaceService {
         if (workspaceIds.size() >= MAX_WORKSPACE_LIST) {
             log.warn("listMine hit cap: userId={}, cap={}", userId, MAX_WORKSPACE_LIST);
         }
-        return workspaces.findAllById(workspaceIds);
+        return List.copyOf(workspaces.findAllById(workspaceIds));
     }
 
     @Transactional
