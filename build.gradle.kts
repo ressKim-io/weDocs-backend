@@ -10,6 +10,22 @@ subprojects {
     apply(plugin = "checkstyle")
     apply(plugin = "pmd")
 
+    // 정적 분석 도구의 전이 의존성 취약점 해소 — dependency-review CI 게이트가 high severity를 차단.
+    // dependency constraint로 최소 버전을 강제해 Gradle 해석 결과와 dependency graph 보고 모두에 반영.
+    dependencies {
+        constraints {
+            add("checkstyle", "commons-beanutils:commons-beanutils:1.11.0") {
+                because("CVE-2025-48734 — Improper Access Control in < 1.11.0")
+            }
+            add("pmd", "commons-beanutils:commons-beanutils:1.11.0") {
+                because("CVE-2025-48734 — Improper Access Control in < 1.11.0")
+            }
+            add("checkstyle", "org.codehaus.plexus:plexus-utils:3.6.1") {
+                because("CVE-2025-67030 — Directory Traversal in extractFile in < 3.6.1")
+            }
+        }
+    }
+
     configure<CheckstyleExtension> {
         toolVersion = "10.21.4"
         configFile = rootProject.file("config/checkstyle/checkstyle.xml")
