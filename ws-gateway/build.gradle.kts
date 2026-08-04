@@ -39,7 +39,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
 
+    testImplementation("com.tngtech.archunit:archunit-junit5:1.4.1")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    // jqwik: 속성 기반 테스트(property-based testing) 라이브러리 — JUnit Platform 엔진으로 동작.
+    testImplementation("net.jqwik:jqwik:1.9.3")
 }
 
 // buf 생성 stub(build/generated/buf/java)을 소스셋에 포함 — make proto-gen 으로 생성.
