@@ -1,0 +1,7 @@
+# prod 프로파일 — 로깅 전용. 콘솔까지 JSON으로 바꿔 컨테이너 stdout 수집 경로도 구조화한다(요구사항 1.2).
+# 파일 출력(logs/app.json, logstash)은 application.yml이 전 프로파일에 이미 적용한다 → 여기서 반복하지 않는다.
+# ws-gateway/src/main/resources/application-prod.yml과 키·값이 동일해야 한다(요구사항 1.4).
+logging:
+  structured:
+    format:
+      console: logstash   # 요구사항 1.2 — prod는 모든 레벨을 JSON으로

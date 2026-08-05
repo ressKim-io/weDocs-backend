@@ -33,3 +33,24 @@ wedocs:
       issuer: wedocs-doc-service
     cors:
       allowed-origins: http://localhost:5173
+
+# main 로깅 블록 명시 미러 — 이 파일이 main application.yml을 완전 대체하므로 미러하지 않으면
+# doc-service 테스트에 구조화 파일 appender가 없는 상태가 되고 설정 회귀가 조용히 통과한다.
+# 값은 main과 문자 단위로 동일하게 유지한다(요구사항 1.4 — 두 모듈 동일 + 세 갱신 지점 동일).
+logging:
+  structured:
+    format:
+      # 파일 출력은 전 프로파일에서 구조화 — 요구사항 1.1(무조건 절).
+      # logstash 포맷 근거: MDC·addKeyValue 쌍을 평면 멤버로, 예외를 stack_trace 단일 멤버로 써서
+      # error.type 속성과 충돌하지 않는다(ecs는 error 객체가 중복된다 — 요구사항 4.8).
+      file: logstash
+      # console 키 없음 = Spring Boot 기본 평문 패턴(요구사항 1.3). test 프로파일도 여기에 해당한다.
+  file:
+    name: logs/app.json     # 구 logs/error.json(ERROR 전용) 대체 — 수집기 tail 재설정 필요(Migration_Note)
+  logback:
+    rollingpolicy:
+      # 볼륨 산정 근거(요구사항 1.5) — 라인 ≈500B, 정상 3~5/s, ≈216MB/day,
+      # cap은 수집기 중단 2일 버퍼. 상세 산정은 src/main/resources/application.yml에 기록.
+      max-file-size: 20MB
+      total-size-cap: 500MB
+      max-history: 7
