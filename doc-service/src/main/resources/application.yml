@@ -65,3 +65,38 @@ springdoc:
     enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:true}
   api-docs:
     path: /v3/api-docs
+
+# 구조화 로깅 — logback-spring.xml 삭제 후 Spring Boot 표준 프로퍼티만 사용한다.
+# 이 구성에서 appender 이름은 기본값 CONSOLE·FILE, encoder는
+# org.springframework.boot.logging.logback.StructuredLogEncoder, 프로파일 분기는
+# application-{profile}.yml이며 ws-gateway와 키·값이 동일하다(요구사항 1.4).
+# ⚠️ 갱신 지점 3곳: 이 파일 · application-prod.yml · src/test/resources/application.yml
+#    (테스트 리소스는 동명 classpath 리소스라 main을 병합하지 않고 완전 대체한다)
+logging:
+  structured:
+    format:
+      # 파일 출력은 전 프로파일에서 구조화 — 요구사항 1.1(무조건 절).
+      # logstash 포맷을 고른 근거: MDC·addKeyValue 쌍을 평면 멤버로 쓰고(ContextPairs.flat),
+      # 예외를 stack_trace 단일 멤버로 써서 error.type 속성과 충돌하지 않는다.
+      # ecs 포맷은 점 표기 키를 중첩 객체로 펼치고 자체 error 객체를 써서
+      # "throwable + error.type 동시 기록"(요구사항 4.8)에서 error 멤버가 중복된다.
+      file: logstash
+      # console 키는 여기에 두지 않는다 — 기본/test/dev 콘솔은 Spring Boot 기본 평문 패턴(요구사항 1.3).
+      # prod만 application-prod.yml에서 console: logstash로 덮는다(요구사항 1.2).
+      # 같은 이유로 application-dev.yml에도 로깅 키를 두지 않는다 — 키 부재가 곧 평문 콘솔이므로
+      # dev에 로깅 블록을 두면 기본 동작을 두 곳에서 중복 표현하고 드리프트 지점만 늘어난다.
+  file:
+    name: logs/app.json     # 구 logs/error.json(ERROR 전용) 대체 — 수집기 tail 재설정 필요(Migration_Note)
+  logback:
+    rollingpolicy:
+      # 볼륨 산정 근거(요구사항 1.5) — 임계값이 ERROR → INFO로 내려가면서 구 100MB cap의 전제가 무효.
+      #   라인 크기: 스택트레이스 없는 구조화 이벤트 1건 ≈ 500B(실측 기준: 구 error.json의
+      #             핸드셰이크 라인 ≈ 530B). 스택트레이스 동반 ERROR 라인은 수 KB.
+      #   이벤트율: NFR 상한 2000 동시 세션, 평균 세션 30분 → 신규 연결 ≈ 1.1/s.
+      #             연결당 구조화 이벤트 3건(handshake·open·close) → 정상 ≈ 3~5/s.
+      #             재연결 폭주(2000 세션이 60초 내 재접속) → 순간 ≈ 100/s.
+      #   일 볼륨: 5/s × 500B × 86400 ≈ 216MB/day.
+      #   보존 목표: 수집기(fluentbit/vector) 중단 24시간을 버티는 로컬 버퍼 → cap ≥ 1일 볼륨.
+      max-file-size: 20MB   # 216MB/day → 약 11회/일 롤링(파일 수 관리 가능)
+      total-size-cap: 500MB # ≈ 2일 버퍼. 파일은 아카이브가 아니라 수집 버퍼라는 전제
+      max-history: 7        # 일 단위 보존 상한(실효 상한은 total-size-cap)
