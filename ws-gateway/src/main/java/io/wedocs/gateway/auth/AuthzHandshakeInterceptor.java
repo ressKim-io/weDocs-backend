@@ -1,5 +1,10 @@
 package io.wedocs.gateway.auth;
 
+import io.wedocs.gateway.common.logging.GatewayErrorType;
+import io.wedocs.gateway.common.logging.GatewayLogEvent;
+import io.wedocs.gateway.common.logging.LogEvents;
+import io.wedocs.gateway.common.logging.LogFields;
+import io.wedocs.gateway.common.logging.LogMasker;
 import io.wedocs.gateway.grpc.PermissionChecker;
 import io.wedocs.gateway.grpc.PermissionResult;
 import io.wedocs.gateway.handshake.HandshakeAttributes;
@@ -53,27 +58,26 @@ public class AuthzHandshakeInterceptor implements HandshakeInterceptor {
         Optional<String> userId = userId(attributes);
         if (docId.isEmpty() || userId.isEmpty()) {
             // 방어: 선행 인터셉터가 배선되지 않은 경우에만 발생. 인가 근거가 없으므로 통과시키지 않는다.
-            return denied(response, HandshakeLog.NONE, HandshakeLog.NONE, "missing_identity", HandshakeLog.NONE);
+            return denied(response, LogFields.NONE, LogFields.NONE, GatewayErrorType.MISSING_IDENTITY, null);
         }
 
-        String maskedUser = HandshakeLog.mask(userId.get());
+        String maskedUser = LogMasker.mask(userId.get());
         // doc-service 계약상 doc_id·user_id는 UUID다(아니면 INVALID_ARGUMENT). 형식 위반을 여기서 접으면
         // 무의미한 왕복이 사라지고, 결과도 달라지지 않는다 — doc-service는 존재하지 않는 문서를 NOT_FOUND가
         // 아니라 DENIED로 답해 존재 여부를 감추므로(IDOR 방지), 형식 오류의 정답도 똑같이 "거부"다.
         if (!isUuid(docId.get()) || !isUuid(userId.get())) {
-            return denied(response, docId.get(), maskedUser, "invalid_doc_id", HandshakeLog.NONE);
+            return denied(response, docId.get(), maskedUser, GatewayErrorType.INVALID_DOC_ID, null);
         }
 
         long startNanos = System.nanoTime();
         PermissionResult result = permissionChecker.checkPermission(docId.get(), userId.get());
         Duration elapsed = Duration.ofNanos(System.nanoTime() - startNanos);
         metrics.checkPermission(elapsed);
-        String elapsedMs = Long.toString(elapsed.toMillis());
 
         return switch (result.outcome()) {
-            case ALLOWED -> grant(response, attributes, docId.get(), maskedUser, result, elapsedMs);
-            case DENIED -> denied(response, docId.get(), maskedUser, "no_permission", elapsedMs);
-            case BACKEND_ERROR -> backendError(response, docId.get(), maskedUser, elapsedMs);
+            case ALLOWED -> grant(response, attributes, docId.get(), maskedUser, result, elapsed);
+            case DENIED -> denied(response, docId.get(), maskedUser, GatewayErrorType.NO_PERMISSION, elapsed);
+            case BACKEND_ERROR -> backendError(response, docId.get(), maskedUser, elapsed);
         };
     }
 
@@ -92,37 +96,46 @@ public class AuthzHandshakeInterceptor implements HandshakeInterceptor {
             String docId,
             String maskedUser,
             PermissionResult result,
-            String elapsedMs) {
+            Duration elapsed) {
         Optional<SessionRole> role = SessionRole.fromProto(result.role());
         if (role.isEmpty()) {
             // allowed=true인데 role을 해석할 수 없다 = 계약 위반이거나 게이트웨이가 모르는 신규 role.
             // 낙관 해석은 곧 권한 상승이므로 거절한다(fail-closed).
-            return denied(response, docId, maskedUser, "unknown_role", elapsedMs);
+            return denied(response, docId, maskedUser, GatewayErrorType.UNKNOWN_ROLE, elapsed);
         }
         attributes.put(SessionRole.ATTRIBUTE, role.get());
-        // result= 는 ADR-0021이 열거한 **최종** 판정 값만 갖는다(ok|authn_fail|authz_denied|backend_error).
-        // 인가 통과는 최종 판정이 아니라 중간 단계라 stage= 로 분리한다 — 계약 필드를 오버로드하면
-        // `result=` 로 대시보드/알림을 거는 쪽이 열거값 밖의 값을 만나게 된다.
-        log.debug("event=ws_handshake stage=authz_pass doc_id={} user={} role={} check_permission_ms={} trace_id={}",
-                docId, maskedUser, role.get().wireValue(), elapsedMs, HandshakeLog.traceId());
+        LogEvents.event(log, GatewayLogEvent.HANDSHAKE_AUTHZ_PASS)
+                .attr(LogFields.DOC_ID, docId)
+                .attr(LogFields.USER_HASH, maskedUser)
+                .attr(LogFields.DOC_ROLE, role.get().wireValue())
+                .durationMs(LogFields.HANDSHAKE_CHECK_PERMISSION_MS, elapsed)
+                .log();
         return true;
     }
 
     private boolean denied(
-            ServerHttpResponse response, String docId, String maskedUser, String reason, String elapsedMs) {
+            ServerHttpResponse response, String docId, String maskedUser, GatewayErrorType errorType, Duration elapsed) {
         response.setStatusCode(HttpStatus.FORBIDDEN);
-        log.warn("event=ws_handshake result=authz_denied reason={} doc_id={} user={} check_permission_ms={} trace_id={}",
-                reason, docId, maskedUser, elapsedMs, HandshakeLog.traceId());
+        LogEvents.event(log, GatewayLogEvent.HANDSHAKE_AUTHZ_DENIED)
+                .attr(LogFields.DOC_ID, docId)
+                .attr(LogFields.USER_HASH, maskedUser)
+                .errorType(errorType)
+                .durationMs(LogFields.HANDSHAKE_CHECK_PERMISSION_MS, elapsed)
+                .log();
         metrics.handshake(AuthMetrics.RESULT_AUTHZ_DENIED);
         return false; // 업그레이드 전 거절 — 세션이 생성되지 않는다.
     }
 
     /// 인가 백엔드 불가. 거부와 같은 403을 주지만(클라이언트에게 권한 여부를 흘리지 않는다) **관측은 분리**한다 —
     /// 이 경로는 모든 사용자의 연결이 막히는 장애 신호다(ADR-0021 §알림 후보).
-    private boolean backendError(ServerHttpResponse response, String docId, String maskedUser, String elapsedMs) {
+    private boolean backendError(ServerHttpResponse response, String docId, String maskedUser, Duration elapsed) {
         response.setStatusCode(HttpStatus.FORBIDDEN);
-        log.error("event=ws_handshake result=backend_error reason=check_permission_unavailable doc_id={} user={} "
-                + "check_permission_ms={} trace_id={}", docId, maskedUser, elapsedMs, HandshakeLog.traceId());
+        LogEvents.event(log, GatewayLogEvent.HANDSHAKE_BACKEND_ERROR)
+                .attr(LogFields.DOC_ID, docId)
+                .attr(LogFields.USER_HASH, maskedUser)
+                .errorType(GatewayErrorType.CHECK_PERMISSION_UNAVAILABLE)
+                .durationMs(LogFields.HANDSHAKE_CHECK_PERMISSION_MS, elapsed)
+                .log();
         metrics.handshake(AuthMetrics.RESULT_BACKEND_ERROR);
         metrics.authzBackendError();
         return false;

@@ -2,6 +2,7 @@ package io.wedocs.doc.grpc;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
+import io.wedocs.doc.common.logging.LogFields;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
@@ -53,7 +54,9 @@ public class GrpcServerLifecycle implements SmartLifecycle {
                     .addService(docService)
                     .build()
                     .start();
-            log.info("doc-service gRPC 서버 시작: port={}", server.getPort());
+            log.atInfo()
+                    .addKeyValue(LogFields.SERVER_PORT, server.getPort())
+                    .log("doc-service gRPC server started");
         } catch (IOException e) {
             throw new IllegalStateException("gRPC 서버 시작 실패: port=" + properties.port(), e);
         }

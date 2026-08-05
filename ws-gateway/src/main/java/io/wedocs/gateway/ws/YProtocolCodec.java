@@ -1,6 +1,9 @@
 package io.wedocs.gateway.ws;
 
 import com.google.protobuf.ByteString;
+import io.wedocs.gateway.common.logging.GatewayErrorType;
+import io.wedocs.gateway.common.logging.GatewayLogEvent;
+import io.wedocs.gateway.common.logging.LogEvents;
 import io.wedocs.proto.crdt.ClientFrame;
 import io.wedocs.proto.crdt.ServerFrame;
 import org.slf4j.Logger;
@@ -57,7 +60,9 @@ final class YProtocolCodec {
         boolean hasStateVector = !frame.getStateVector().isEmpty();
         boolean hasUpdate = !frame.getUpdate().isEmpty();
         if (hasStateVector && hasUpdate) {
-            log.warn(ProtocolError.DUAL_FIELD_WARNING.message());
+            LogEvents.event(log, GatewayLogEvent.FRAME_ANOMALY)
+                    .errorType(GatewayErrorType.DUAL_FIELD)
+                    .log();
         }
         if (hasStateVector) {
             return Optional.of(syncMessage(SYNC_STEP1, frame.getStateVector()));

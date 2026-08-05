@@ -4,6 +4,9 @@ import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import io.wedocs.doc.common.error.InfraErrorCode;
+import io.wedocs.doc.common.logging.DocLogErrorType;
+import io.wedocs.doc.common.logging.DocLogEvent;
+import io.wedocs.doc.common.logging.LogEvents;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 
@@ -80,8 +83,9 @@ public class JwtKeys {
     private static RSAKey generateEphemeral() {
         // dev 전용: 재시작 시 기존 토큰 전부 무효 + 다중 replica 불가.
         // prod는 private-key-location에 K8s Secret 마운트 필수 — 강제화는 M5 매니페스트(ADR-0017 추적).
-        log.warn("jwt private-key-location 미설정 — 임시 RSA 키 생성(dev 전용). "
-                + "재시작 시 기존 토큰이 전부 무효화된다. prod는 반드시 키를 주입할 것(ADR-0017)");
+        LogEvents.event(log, DocLogEvent.JWT_EPHEMERAL_KEY_GENERATED)
+                .errorType(DocLogErrorType.JWT_KEY_NOT_CONFIGURED)
+                .log();
         try {
             KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
             generator.initialize(EPHEMERAL_KEY_BITS);

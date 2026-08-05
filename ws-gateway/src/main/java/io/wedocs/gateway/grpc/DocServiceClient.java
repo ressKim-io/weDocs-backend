@@ -3,6 +3,9 @@ package io.wedocs.gateway.grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
+import io.wedocs.gateway.common.logging.GatewayLogEvent;
+import io.wedocs.gateway.common.logging.LogEvents;
+import io.wedocs.gateway.common.logging.LogFields;
 import io.wedocs.proto.doc.CheckPermissionRequest;
 import io.wedocs.proto.doc.CheckPermissionResponse;
 import io.wedocs.proto.doc.DocServiceGrpc;
@@ -71,7 +74,13 @@ public class DocServiceClient implements PermissionChecker {
         } catch (StatusRuntimeException e) {
             // 삼키지 않는다(debugging.md) — 상태코드는 doc-service 다운(UNAVAILABLE)과 지연(DEADLINE_EXCEEDED)을
             // 사후 구분하는 유일한 단서다. 호출부가 authz_backend_error_total을 올린다.
-            log.warn("CheckPermission failed status={} doc_id={}", e.getStatus().getCode(), docId, e);
+            LogEvents.event(log, GatewayLogEvent.AUTHZ_CHECK_FAILED)
+                    .attr(LogFields.RPC_SERVICE, "doc.DocService")
+                    .attr(LogFields.RPC_METHOD, "CheckPermission")
+                    .attr(LogFields.DOC_ID, docId)
+                    .attr(LogFields.ERROR_TYPE, e.getStatus().getCode().name().toLowerCase())
+                    .cause(e)
+                    .log();
             return PermissionResult.backendError();
         }
     }
