@@ -1,5 +1,10 @@
 package io.wedocs.gateway.auth;
 
+import io.wedocs.gateway.common.logging.GatewayErrorType;
+import io.wedocs.gateway.common.logging.GatewayLogEvent;
+import io.wedocs.gateway.common.logging.LogEvents;
+import io.wedocs.gateway.common.logging.LogFields;
+import io.wedocs.gateway.common.logging.LogMasker;
 import io.wedocs.gateway.handshake.HandshakeAttributes;
 import io.wedocs.gateway.handshake.RoomId;
 import org.slf4j.Logger;
@@ -13,6 +18,7 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,23 +65,23 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
         Optional<String> token = AuthSubprotocol.extractToken(requested);
         if (token.isEmpty()) {
             metrics.handshake(AuthMetrics.RESULT_AUTHN_FAIL);
-            return reject(response, docId, "no_token", HandshakeLog.NONE); // 검증 시도 자체가 없으므로 verify_ms 없음.
+            return reject(response, docId, GatewayErrorType.NO_TOKEN, null); // 검증 시도 자체가 없으므로 duration 생략.
         }
 
         long startNanos = System.nanoTime();
         Optional<String> userId = verifier.verifySubject(token.get());
-        String verifyMs = Long.toString((System.nanoTime() - startNanos) / 1_000_000L);
+        Duration verifyDuration = Duration.ofNanos(System.nanoTime() - startNanos);
         if (userId.isEmpty()) {
             metrics.jwtVerify(AuthMetrics.RESULT_FAIL);
             metrics.handshake(AuthMetrics.RESULT_AUTHN_FAIL);
             // 검증은 실제 수행됐으므로 소요시간을 남긴다 — 느린 검증(JWKS 재조회) 실패를 운영상 구분(ADR-0021).
-            return reject(response, docId, "invalid_token", verifyMs);
+            return reject(response, docId, GatewayErrorType.INVALID_TOKEN, verifyDuration);
         }
 
         metrics.jwtVerify(AuthMetrics.RESULT_OK);
         attributes.put(USER_ID_ATTRIBUTE, userId.get());
         // ok 집계·로그는 afterHandshake에서(최종 성공 시) — Origin 등 auth 이후 거절을 ok로 오집계 방지(H-1).
-        PENDING.set(new PendingHandshake(docId, HandshakeLog.mask(userId.get()), verifyMs));
+        PENDING.set(new PendingHandshake(docId, LogMasker.mask(userId.get()), verifyDuration));
         return true;
     }
 
@@ -95,15 +101,21 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
             return;
         }
         metrics.handshake(AuthMetrics.RESULT_OK);
-        log.info("event=ws_handshake result=ok doc_id={} user={} verify_ms={} trace_id={}",
-                pending.docId(), pending.maskedUser(), pending.verifyMs(), HandshakeLog.traceId());
+        LogEvents.event(log, GatewayLogEvent.HANDSHAKE_OK)
+                .attr(LogFields.DOC_ID, pending.docId())
+                .attr(LogFields.USER_HASH, pending.maskedUser())
+                .durationMs(LogFields.HANDSHAKE_VERIFY_MS, pending.verifyDuration())
+                .log();
     }
 
-    private boolean reject(ServerHttpResponse response, String docId, String reason, String verifyMs) {
+    private boolean reject(ServerHttpResponse response, String docId, GatewayErrorType errorType, Duration verifyDuration) {
         response.setStatusCode(HttpStatus.UNAUTHORIZED);
         // 토큰은 로깅하지 않는다(security.md) — 사유·doc_id·verify_ms·trace_id만. authn_fail은 access log의 401과 1:1 대응(ADR-0021).
-        log.warn("event=ws_handshake result=authn_fail reason={} doc_id={} verify_ms={} trace_id={}",
-                reason, docId, verifyMs, HandshakeLog.traceId());
+        LogEvents.event(log, GatewayLogEvent.HANDSHAKE_AUTHN_FAIL)
+                .attr(LogFields.DOC_ID, docId)
+                .errorType(errorType)
+                .durationMs(LogFields.HANDSHAKE_VERIFY_MS, verifyDuration)
+                .log();
         return false; // 업그레이드 전 거절 — 세션이 생성되지 않는다.
     }
 
@@ -116,10 +128,10 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
     /// room 인터셉터가 auth보다 먼저 실행돼(WebSocketConfig 순서) 검증된 RoomId를 넣어둔다 — 그 값을 재사용한다.
     /// attribute의 raw Object 캐스트는 소유자(HandshakeAttributes.roomId)에 캡슐화 — 여기선 RoomId만 다룬다.
     private static String docId(Map<String, Object> attributes) {
-        return HandshakeAttributes.roomId(attributes).map(RoomId::value).orElse(HandshakeLog.NONE);
+        return HandshakeAttributes.roomId(attributes).map(RoomId::value).orElse(LogFields.NONE);
     }
 
     /// afterHandshake의 성공 로그에 필요한 요청 스코프 상태(before→after 전달용).
-    private record PendingHandshake(String docId, String maskedUser, String verifyMs) {
+    private record PendingHandshake(String docId, String maskedUser, Duration verifyDuration) {
     }
 }

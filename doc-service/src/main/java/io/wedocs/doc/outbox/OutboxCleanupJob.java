@@ -1,5 +1,8 @@
 package io.wedocs.doc.outbox;
 
+import io.wedocs.doc.common.logging.DocLogEvent;
+import io.wedocs.doc.common.logging.LogEvents;
+import io.wedocs.doc.common.logging.LogFields;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,7 +39,10 @@ class OutboxCleanupJob {
         int unpublishedDeleted = repository.deleteByPublishedAtIsNullAndCreatedAtBefore(unpublishedCutoff);
 
         if (publishedDeleted + unpublishedDeleted > 0) {
-            log.info("outbox cleanup: published={} unpublished={}", publishedDeleted, unpublishedDeleted);
+            LogEvents.event(log, DocLogEvent.OUTBOX_CLEANUP_COMPLETED)
+                    .attr(LogFields.OUTBOX_PUBLISHED_DELETED, publishedDeleted)
+                    .attr(LogFields.OUTBOX_UNPUBLISHED_DELETED, unpublishedDeleted)
+                    .log();
         }
     }
 }

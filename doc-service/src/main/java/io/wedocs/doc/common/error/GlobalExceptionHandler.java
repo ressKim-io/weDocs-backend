@@ -1,5 +1,7 @@
 package io.wedocs.doc.common.error;
 
+import io.wedocs.doc.common.logging.DocLogEvent;
+import io.wedocs.doc.common.logging.LogEvents;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,7 +24,10 @@ class GlobalExceptionHandler {
         DocErrorCode code = e.code();
         if (code.isInternal()) {
             // 불투명 에러: 카탈로그 문구조차 신뢰하지 않고 고정 리터럴로 — 내부 상세(e.getMessage())는 로그로만(P4).
-            log.error("domain invariant broken: code={}", code.slug(), e);
+            LogEvents.event(log, DocLogEvent.HTTP_REQUEST_FAILED)
+                    .errorType(code.slug())
+                    .cause(e)
+                    .log();
             return problem(code, "unexpected error");
         }
         return problem(code, code.message());

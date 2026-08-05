@@ -1,6 +1,10 @@
 package io.wedocs.gateway.ws;
 
 import io.grpc.stub.StreamObserver;
+import io.wedocs.gateway.common.logging.GatewayErrorType;
+import io.wedocs.gateway.common.logging.GatewayLogEvent;
+import io.wedocs.gateway.common.logging.LogEvents;
+import io.wedocs.gateway.common.logging.LogFields;
 import io.wedocs.gateway.grpc.EngineClient;
 import io.wedocs.gateway.handshake.HandshakeAttributes;
 import io.wedocs.gateway.handshake.RoomId;
@@ -79,7 +83,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         } catch (RuntimeException e) {
             // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
             // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
-            log.error("engine stream open failed session={} room={}", session.getId(), roomId.value(), e);
+            LogEvents.event(log, GatewayLogEvent.SESSION_OPEN_FAILED)
+                    .attr(LogFields.SESSION_ID, session.getId())
+                    .attr(LogFields.DOC_ID, roomId.value())
+                    .errorType(GatewayErrorType.ENGINE_UNAVAILABLE)
+                    .cause(e)
+                    .log();
             closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
         }
     }
@@ -99,7 +108,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                         .ifPresent(bridge.toEngine()::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
-                log.warn("malformed frame dropped session={} room={}", id, bridge.room().value(), e);
+                LogEvents.event(log, GatewayLogEvent.FRAME_DROPPED)
+                        .attr(LogFields.SESSION_ID, id)
+                        .attr(LogFields.DOC_ID, bridge.room().value())
+                        .errorType(GatewayErrorType.MALFORMED_FRAME)
+                        .cause(e)
+                        .log();
             }
             return bridge;
         });
@@ -119,7 +133,11 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        log.warn("ws transport error session={}", session.getId(), exception);
+        LogEvents.event(log, GatewayLogEvent.TRANSPORT_FAILED)
+                .attr(LogFields.SESSION_ID, session.getId())
+                .errorType(GatewayErrorType.TRANSPORT_ERROR)
+                .cause(exception)
+                .log();
         // Spring 스펙상 afterConnectionClosed가 이어지지만, gRPC 엔진 스트림은 즉시 정리하여
         // 전송 에러 이후 afterConnectionClosed 호출까지의 시간 동안 엔진이 끊긴 세션에
         // 프레임을 보내는 것을 방지한다. bridges.remove()의 원자성이 이중 정리를 막는다.
@@ -145,7 +163,11 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             return true;
         }
         sessionMetrics.writeDropped();
-        log.debug("viewer write dropped session={} room={}", sessionId, bridge.room().value());
+        LogEvents.event(log, GatewayLogEvent.WRITE_DROPPED)
+                .attr(LogFields.SESSION_ID, sessionId)
+                .attr(LogFields.DOC_ID, bridge.room().value())
+                .errorType(GatewayErrorType.VIEWER_READ_ONLY)
+                .log();
         return false;
     }
 
@@ -159,7 +181,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
             @Override
             public void onError(Throwable t) {
-                log.warn("engine stream error session={} room={}", session.getId(), room.value(), t);
+                LogEvents.event(log, GatewayLogEvent.ENGINE_STREAM_FAILED)
+                        .attr(LogFields.SESSION_ID, session.getId())
+                        .attr(LogFields.DOC_ID, room.value())
+                        .errorType(GatewayErrorType.ENGINE_STREAM_ERROR)
+                        .cause(t)
+                        .log();
                 endSession(session, CloseStatus.SERVER_ERROR);
             }
 
@@ -174,7 +201,11 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         try {
             session.sendMessage(new BinaryMessage(bytes));
         } catch (IOException e) {
-            log.warn("ws send failed session={}", session.getId(), e);
+            LogEvents.event(log, GatewayLogEvent.SEND_FAILED)
+                    .attr(LogFields.SESSION_ID, session.getId())
+                    .errorType(GatewayErrorType.SEND_FAILED)
+                    .cause(e)
+                    .log();
             endSession(session, CloseStatus.SERVER_ERROR);
         }
     }

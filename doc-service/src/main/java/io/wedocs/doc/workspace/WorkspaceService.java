@@ -3,6 +3,10 @@ package io.wedocs.doc.workspace;
 import io.wedocs.doc.common.error.ConflictException;
 import io.wedocs.doc.common.error.DocErrorCode;
 import io.wedocs.doc.common.error.NotFoundException;
+import io.wedocs.doc.common.logging.DocLogEvent;
+import io.wedocs.doc.common.logging.LogEvents;
+import io.wedocs.doc.common.logging.LogFields;
+import io.wedocs.doc.common.logging.LogMasker;
 import io.wedocs.doc.auth.User;
 import io.wedocs.doc.auth.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +50,10 @@ public class WorkspaceService {
                 .map(WorkspaceMember::getWorkspaceId)
                 .toList();
         if (workspaceIds.size() >= MAX_WORKSPACE_LIST) {
-            log.warn("listMine hit cap: userId={}, cap={}", userId, MAX_WORKSPACE_LIST);
+            LogEvents.event(log, DocLogEvent.WORKSPACE_LIST_CAPPED)
+                    .attr(LogFields.USER_HASH, LogMasker.mask(userId.toString()))
+                    .attr(LogFields.WORKSPACE_LIST_CAP, MAX_WORKSPACE_LIST)
+                    .log();
         }
         return List.copyOf(workspaces.findAllById(workspaceIds));
     }
