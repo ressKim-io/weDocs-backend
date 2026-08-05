@@ -16,3 +16,6 @@ tools/*.jar
 *.iml
 .vscode/
 logs/
+
+# jqwik property-based testing database
+.jqwik-database
