@@ -132,6 +132,46 @@ class ArchitectureRulesTest {
                     .should(chainCauseWhenCatchingCheckedExceptions());
 
     // ──────────────────────────────────────────────────────────────────
+    // 로깅 아키텍처 규칙 (Req 8.3, 10.3, 10.4, 11.5)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * OpenTelemetry API에 대한 컴파일 타임 의존을 금지한다.
+     * OTel은 런타임 javaagent로만 사용하며, 소스 코드에서 직접 참조하지 않는다.
+     */
+    @ArchTest
+    static final ArchRule no_opentelemetry_compile_time_dependency =
+            noClasses().that().resideInAPackage("io.wedocs..")
+                    .should().dependOnClassesThat().resideInAPackage("io.opentelemetry..")
+                    .as("OpenTelemetry는 런타임 javaagent 전용 — 컴파일 타임 참조 금지");
+
+    /**
+     * 로깅 규약 구현 클래스는 {@code io.wedocs.doc.common.logging} 패키지에 위치해야 한다.
+     * LogFields, LogEvents, LogMasker, LogCorrelation, *LogEvent, *ErrorType, AttributeValues.
+     */
+    @ArchTest
+    static final ArchRule logging_convention_classes_reside_in_common_logging =
+            classes().that().haveSimpleNameEndingWith("LogEvent")
+                    .or().haveSimpleNameEndingWith("ErrorType")
+                    .or().haveSimpleName("LogFields")
+                    .or().haveSimpleName("LogEvents")
+                    .or().haveSimpleName("LogMasker")
+                    .or().haveSimpleName("LogCorrelation")
+                    .or().haveSimpleName("AttributeValues")
+                    .should().resideInAPackage("..common.logging..")
+                    .as("로깅 규약 구현은 common.logging 패키지에 위치해야 한다");
+
+    /**
+     * doc-service 모듈은 ws-gateway 패키지({@code io.wedocs.gateway..})를 참조할 수 없다.
+     * 모듈 간 결합을 방지하여 독립 배포를 보장한다.
+     */
+    @ArchTest
+    static final ArchRule no_cross_module_dependency_to_ws_gateway =
+            noClasses().that().resideInAPackage("io.wedocs.doc..")
+                    .should().dependOnClassesThat().resideInAPackage("io.wedocs.gateway..")
+                    .as("doc-service는 ws-gateway 패키지(io.wedocs.gateway..)를 참조할 수 없다");
+
+    // ──────────────────────────────────────────────────────────────────
     // Custom Conditions
     // ──────────────────────────────────────────────────────────────────
 
