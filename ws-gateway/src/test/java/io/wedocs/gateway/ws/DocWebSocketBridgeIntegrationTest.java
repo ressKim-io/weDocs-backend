@@ -55,6 +55,11 @@ class DocWebSocketBridgeIntegrationTest extends AbstractWsIntegrationTest {
         WebSocketSession sessionA = connect(clientA, ROOM_B);
         connect(clientB, ROOM_B);
         engine().awaitObservers(2, TIMEOUT_MS);
+        // B의 join으로 게이트웨이가 **기존 peer인 A에게** queryAwareness(3)를 발신한다
+        // (M3 Phase 1 §1.3 — 신규 접속자가 기존 커서를 즉시 보게 하는 발신).
+        // 이 프레임은 sync fan-out과 무관하므로 여기서 소비하고 넘어간다. 소비 대신 무시하지 않는 이유:
+        // 발신이 죽어도 테스트가 통과하면 §1.3 배선의 회귀를 이 클래스가 가려버린다.
+        assertThat(clientA.received.poll(TIMEOUT_MS, TimeUnit.MILLISECONDS)).isEqualTo(new byte[]{0x03});
 
         // When: A가 Update(payload={0x55,0x66}) 송신 → 엔진 broadcast
         sessionA.sendMessage(new BinaryMessage(new byte[]{0x00, 0x02, 0x02, 0x55, 0x66}));

@@ -56,10 +56,17 @@ public enum GatewayErrorType {
     /// 클라이언트로의 메시지 전송 실패.
     SEND_FAILED("send_failed"),
 
+    /// 세션 송신 buffer 또는 send-time 상한 초과 — 느린 클라이언트.
+    /// `send_failed`와 구분하되, Spring이 두 제한에 같은 예외를 사용하므로 세부 원인은 단정하지 않는다.
+    SEND_LIMIT_EXCEEDED("send_limit_exceeded"),
+
     // ── 비즈니스 로직 ──
 
     /// viewer 읽기 전용 세션에서 쓰기 시도.
     VIEWER_READ_ONLY("viewer_read_only"),
+
+    /// awareness 페이로드가 크기 상한을 초과 — 룸 fan-out 증폭을 차단하고 그 프레임만 버렸다.
+    AWARENESS_TOO_LARGE("awareness_too_large"),
 
     /// ServerFrame에 state_vector와 update가 동시 설정(엔진 계약 위반 의심).
     DUAL_FIELD("dual_field");

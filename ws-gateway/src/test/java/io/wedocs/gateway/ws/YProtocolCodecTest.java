@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// y-websocket/y-protocols 와이어 ↔ gRPC 프레임 번역 검증.
 /// 와이어 포맷(SSOT §A): top-level `varUint(type)`, sync 서브 `varUint(subtype)·varBuffer(payload)`.
@@ -64,13 +65,97 @@ class YProtocolCodecTest {
     }
 
     @Test
-    @DisplayName("awareness/auth/queryAwareness/미인식 top-level 타입은 drop(empty)")
-    void decodeInbound_nonSyncMessages_areDropped() {
-        // Given: awareness(1)·auth(2)·queryAwareness(3)·미인식(99) — 페이로드 형태 무관, 첫 varUint만 본다
+    @DisplayName("非sync top-level 타입은 엔진으로 가지 않는다(empty)")
+    void decodeInbound_nonSyncMessages_doNotReachEngine() {
+        // Given: awareness(1)·auth(2)·queryAwareness(3)·미인식(99) — 페이로드 형태 무관, 첫 varUint만 본다.
+        //
+        // ⚠️ M3 Phase 1에서 이 테스트의 **의미**가 바뀌었다(계약 전환 지점).
+        // 이전: 네 타입 모두 "버려진다".
+        // 지금: awareness(1)는 버려지지 않는다 — 엔진을 통과하지 않고 게이트웨이가 룸에 릴레이한다
+        //       (decodeAwareness가 그 경로다). 여기서 empty인 것은 "엔진으로 갈 프레임이 아니다"라는 뜻.
+        // auth(2)·queryAwareness(3)·미인식은 여전히 어디로도 가지 않는다.
         assertThat(codec.decodeInbound(new byte[]{0x01, 0x00}, DOC_ID)).isEmpty();
         assertThat(codec.decodeInbound(new byte[]{0x02, 0x00}, DOC_ID)).isEmpty();
         assertThat(codec.decodeInbound(new byte[]{0x03, 0x00}, DOC_ID)).isEmpty();
         assertThat(codec.decodeInbound(new byte[]{0x63, 0x00}, DOC_ID)).isEmpty();
+    }
+
+    // ─── awareness (M3 Phase 1) ───
+
+    @Test
+    @DisplayName("awareness(1) 디코드 → 페이로드 바이트를 그대로 꺼낸다(해석하지 않는다)")
+    void decodeAwareness_extractsPayloadVerbatim() {
+        // Given: [messageAwareness=1, varBuffer({0xAA,0xBB,0xCC})]
+        byte[] ws = {0x01, 0x03, (byte) 0xAA, (byte) 0xBB, (byte) 0xCC};
+
+        // When
+        Optional<byte[]> payload = codec.decodeAwareness(ws);
+
+        // Then: 안의 clientId·상태는 불투명 바이트로 남는다(§1.2 무해석 불변식)
+        assertThat(payload).isPresent();
+        assertThat(payload.get()).containsExactly(0xAA, 0xBB, 0xCC);
+    }
+
+    @Test
+    @DisplayName("sync·auth·queryAwareness·미인식은 awareness 경로에서 empty — sync 경로로 넘어간다")
+    void decodeAwareness_nonAwarenessMessages_areEmpty() {
+        assertThat(codec.decodeAwareness(new byte[]{0x00, 0x02, 0x01, 42})).isEmpty();
+        assertThat(codec.decodeAwareness(new byte[]{0x02, 0x00})).isEmpty();
+        assertThat(codec.decodeAwareness(new byte[]{0x03})).isEmpty();
+        assertThat(codec.decodeAwareness(new byte[]{0x63, 0x00})).isEmpty();
+    }
+
+    @Test
+    @DisplayName("프레이밍이 깨진 awareness(선언 길이 > 실제 바이트)는 예외 — 룸 전체로 증폭시키지 않는다")
+    void decodeAwareness_truncatedPayload_throws() {
+        // Given: 길이 5를 선언했지만 1바이트만 있다.
+        // 원본 바이트를 통째로 릴레이하는 설계라면 이 프레임이 N명의 파서를 동시에 넘어뜨린다.
+        byte[] ws = {0x01, 0x05, 0x42};
+
+        assertThatThrownBy(() -> codec.decodeAwareness(ws))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("빈 프레임은 awareness 경로에서도 예외(조기 종료) — 호출부가 프레임 단위로 흡수한다")
+    void decodeAwareness_emptyFrame_throws() {
+        assertThatThrownBy(() -> codec.decodeAwareness(new byte[0]))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("awareness 인코드 → [1, len, payload]")
+    void encodeAwareness_framesWithTypeAndLength() {
+        byte[] ws = codec.encodeAwareness(new byte[]{0x11, 0x22});
+
+        assertThat(ws).containsExactly(0x01, 0x02, 0x11, 0x22);
+    }
+
+    @Test
+    @DisplayName("awareness 라운드트립: 인코드한 프레임을 디코드하면 같은 페이로드")
+    void roundTrip_awareness() {
+        byte[] payload = {7, 6, 5, 4, 3, 2, 1};
+
+        byte[] ws = codec.encodeAwareness(payload);
+
+        assertThat(codec.decodeAwareness(ws)).contains(payload);
+    }
+
+    @Test
+    @DisplayName("queryAwareness 인코드 → 타입 3 단일 바이트, 페이로드 없음")
+    void encodeQueryAwareness_isTypeOnly() {
+        // y-websocket이 bc.publish로 보내는 것과 동일한 형태(type byte만) — 그 클라이언트의
+        // messageHandlers[3]이 이 프레임을 받아 전체 awareness 상태로 응답한다.
+        assertThat(codec.encodeQueryAwareness()).containsExactly(0x03);
+    }
+
+    @Test
+    @DisplayName("queryAwareness 프레임은 호출마다 새 배열 — 공유 가변 배열을 노출하지 않는다")
+    void encodeQueryAwareness_returnsFreshArray() {
+        byte[] first = codec.encodeQueryAwareness();
+        byte[] second = codec.encodeQueryAwareness();
+
+        assertThat(first).isNotSameAs(second).isEqualTo(second);
     }
 
     @Test
