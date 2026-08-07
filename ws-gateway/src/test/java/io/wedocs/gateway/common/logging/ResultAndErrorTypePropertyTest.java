@@ -26,8 +26,9 @@ class ResultAndErrorTypePropertyTest {
     private static final Pattern SNAKE_CASE = Pattern.compile("^[a-z][a-z0-9]*(_[a-z0-9]+)*$");
 
     /// `GatewayErrorType` 엔트리 수 — 갱신은 대시보드·알림 계약 변경을 뜻한다.
-    /// 2026-08-07 M3 Phase 1: 14 → 15 (`send_buffer_exceeded` 추가, 데코레이터 송신 상한 초과).
-    private static final int EXPECTED_ERROR_TYPE_ENTRIES = 15;
+    /// 2026-08-07 M3 Phase 1: 14 → 16 (`send_buffer_exceeded` 데코레이터 송신 상한 초과,
+    /// `awareness_too_large` awareness fan-out 증폭 차단).
+    private static final int EXPECTED_ERROR_TYPE_ENTRIES = 16;
 
     /// 핸드셰이크 판정에 사용되는 result 닫힌 집합 (요구사항 6.2).
     /// RESULT_FAIL은 jwt_verify 메트릭 전용이므로 포함하지 않는다.

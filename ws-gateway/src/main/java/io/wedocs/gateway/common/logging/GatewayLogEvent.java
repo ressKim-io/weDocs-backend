@@ -62,7 +62,7 @@ public enum GatewayLogEvent {
             Set.of(LogFields.DOC_ID, LogFields.USER_HASH, LogFields.ERROR_TYPE),
             "ws handshake rejected: authorization backend unavailable"),
 
-    // ── 비핸드셰이크 이벤트 (9개) ──
+    // ── 비핸드셰이크 이벤트 (10개) ──
 
     /// 인가 gRPC 호출 실패 — CheckPermission 예외.
     AUTHZ_CHECK_FAILED(
@@ -87,6 +87,13 @@ public enum GatewayLogEvent {
             "ws_write_dropped", Level.DEBUG, null, null,
             Set.of(LogFields.SESSION_ID, LogFields.DOC_ID, LogFields.ERROR_TYPE),
             "ws write dropped: viewer read-only"),
+
+    /// awareness 릴레이 드롭 — 상한 초과 등으로 그 프레임만 버림(세션은 유지).
+    /// DEBUG인 이유: 커서 이동마다 발생할 수 있는 경로라 WARN이면 그 자체가 로그 플러딩 벡터다.
+    AWARENESS_DROPPED(
+            "ws_awareness_dropped", Level.DEBUG, null, null,
+            Set.of(LogFields.SESSION_ID, LogFields.DOC_ID, LogFields.ERROR_TYPE),
+            "ws awareness frame dropped"),
 
     /// 전송 실패 — WebSocket 전송 계층 오류.
     TRANSPORT_FAILED(

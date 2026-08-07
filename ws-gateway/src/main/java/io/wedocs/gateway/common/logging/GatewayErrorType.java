@@ -65,6 +65,9 @@ public enum GatewayErrorType {
     /// viewer 읽기 전용 세션에서 쓰기 시도.
     VIEWER_READ_ONLY("viewer_read_only"),
 
+    /// awareness 페이로드가 크기 상한을 초과 — 룸 fan-out 증폭을 차단하고 그 프레임만 버렸다.
+    AWARENESS_TOO_LARGE("awareness_too_large"),
+
     /// ServerFrame에 state_vector와 update가 동시 설정(엔진 계약 위반 의심).
     DUAL_FIELD("dual_field");
 

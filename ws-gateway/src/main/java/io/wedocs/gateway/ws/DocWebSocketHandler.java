@@ -83,6 +83,19 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// ⚠️ 임시값 — Phase 4에서 정량화.
     static final int SEND_TIME_LIMIT_MS = 10_000;
 
+    /// awareness 페이로드 크기 상한(secure-coding.md P2 · 가드레일 8: 신규 수신 경로는 상한 동반).
+    ///
+    /// WS 프레임 상한(≈4MiB)이 이미 이 경로를 묶고 있지만 그 값은 **문서 sync** 크기에 맞춰진 것이다.
+    /// awareness는 게이트웨이에서 **N배로 증폭되는 유일한 인바운드 경로**라 같은 상한을 쓸 수 없다 —
+    /// 4MiB 프레임 하나가 N명에게 복제되면 룸 전체 세션이 송신 큐 상한에 걸려 **함께 끊긴다**.
+    /// 즉 악의적 클라이언트 1명이 프레임 한 개로 룸을 비울 수 있다.
+    ///
+    /// 실제 y-protocols awareness 상태는 clientId·clock·`{name, color}` JSON으로 수백 바이트다.
+    /// 64KiB는 그보다 두 자리 넉넉하므로 정상 트래픽을 자르지 않는다.
+    ///
+    /// ⚠️ 이것은 **크기** 상한이다. **빈도** 제어(N ms 윈도우 coalescing)는 Phase 4 몫이다.
+    static final int MAX_AWARENESS_PAYLOAD_BYTES = 64 * 1024;
+
     private final EngineClient engineClient;
     private final SessionMetrics sessionMetrics;
     private final YProtocolCodec codec = new YProtocolCodec();
@@ -113,11 +126,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         StreamObserver<ServerFrame> toClient =
                 new SerializingStreamObserver<>(engineResponseObserver(guarded, roomId));
         // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
+        //
+        // try가 openSync **한 줄만** 감싸는 것은 의도다. 등록(bridges·rooms) 이후의 예외까지 이 catch가
+        // 받으면 "엔진 불가"로 오분류되고, 이미 등록된 세션에 대해 정리 없이 close만 하게 된다.
+        StreamObserver<ClientFrame> toEngine;
         try {
-            StreamObserver<ClientFrame> toEngine =
-                    engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
-            bridges.put(session.getId(), new SessionBridge(roomId, role.get(), guarded, toEngine));
-            rooms.join(roomId, session.getId());
+            toEngine = engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
         } catch (RuntimeException e) {
             // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
             // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
@@ -128,7 +142,14 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .cause(e)
                     .log();
             closeQuietly(guarded, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
+            return;
         }
+        bridges.put(session.getId(), new SessionBridge(roomId, role.get(), guarded, toEngine));
+        rooms.join(roomId, session.getId());
+        // 신규 접속자가 기존 peer의 커서를 **즉시** 보게 한다(§1.3). 등록 이후에 호출한다 —
+        // 자기 자신은 대상에서 빠지고(아직 awareness 상태가 없다), 대상 세션의 send 실패는
+        // sendBinary가 그 세션 단위로 처리하므로 신규 세션 수립을 실패시키지 않는다.
+        queryExistingPeers(roomId, session.getId());
     }
 
     /// 세션의 아웃바운드를 큐잉·직렬화하는 데코레이터로 감싼다 — 클래스 주석 §D-6의 처방.
@@ -142,27 +163,121 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
         byte[] payload = toBytes(message.getPayload());
-        // [Req 11.2 원자성 보장] get+onNext를 computeIfPresent로 원자화한다.
-        // ConcurrentHashMap의 키 단위 락이 afterConnectionClosed/endSession의 remove와 상호 배제
-        // → request StreamObserver에 onNext와 onCompleted가 동시 호출되지 않음(grpc-java 계약: 동시 호출 금지).
-        // 이것이 non-atomic check-then-act를 방지하는 핵심 패턴이다: "브리지 존재 확인 → onNext 호출"을
-        // 단일 원자 연산으로 합쳐 remove와의 경합을 제거한다. (§D-6 확장)
-        bridges.computeIfPresent(session.getId(), (id, bridge) -> {
+        String sessionId = session.getId();
+        // awareness는 엔진을 통과하지 않는다(SDD §6.1, M3 판단 1) — 룸 릴레이로 끝난다.
+        // 이 판정은 top-level 타입 varUint 하나만 읽으므로 sync 경로 비용에 영향이 없다.
+        SessionBridge sender = bridges.get(sessionId);
+        if (sender == null) {
+            return; // 이미 정리된 세션 — 아래 computeIfPresent의 no-op과 동일한 결과
+        }
+        Optional<byte[]> awareness;
+        try {
+            awareness = codec.decodeAwareness(payload);
+        } catch (RuntimeException e) {
+            // 프레이밍이 깨진 awareness. 손상 프레임 한 개로 세션을 죽이지 않는다.
+            frameDropped(sessionId, sender.room(), e);
+            return;
+        }
+        if (awareness.isPresent()) {
+            relayAwareness(sender, sessionId, awareness.get());
+            return;
+        }
+        forwardToEngine(sessionId, payload);
+    }
+
+    /// 브라우저 → 엔진(sync 전용).
+    ///
+    /// [Req 11.2 원자성 보장] get+onNext를 computeIfPresent로 원자화한다.
+    /// ConcurrentHashMap의 키 단위 락이 afterConnectionClosed/endSession의 remove와 상호 배제
+    /// → request StreamObserver에 onNext와 onCompleted가 동시 호출되지 않음(grpc-java 계약: 동시 호출 금지).
+    /// 이것이 non-atomic check-then-act를 방지하는 핵심 패턴이다: "브리지 존재 확인 → onNext 호출"을
+    /// 단일 원자 연산으로 합쳐 remove와의 경합을 제거한다. (§D-6 확장)
+    ///
+    /// ⚠️ awareness fan-out을 이 람다 **안에** 넣지 말 것 — CHM 키 락을 쥔 채 다른 세션에 I/O를 하게 되고,
+    /// 그러면 (a) VT pinning, (b) 같은 룸 세션끼리 지연 전파, (c) 대상 세션 종료(→`detach`)가 다른 키의
+    /// 락을 요구하는 형태가 된다.
+    private void forwardToEngine(String sessionId, byte[] payload) {
+        bridges.computeIfPresent(sessionId, (id, bridge) -> {
             try {
                 codec.decodeInbound(payload, bridge.room().value())
                         .filter(frame -> isPermitted(frame, bridge, id))
                         .ifPresent(bridge.toEngine()::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
-                LogEvents.event(log, GatewayLogEvent.FRAME_DROPPED)
-                        .attr(LogFields.SESSION_ID, id)
-                        .attr(LogFields.DOC_ID, bridge.room().value())
-                        .errorType(GatewayErrorType.MALFORMED_FRAME)
-                        .cause(e)
-                        .log();
+                frameDropped(id, bridge.room(), e);
             }
             return bridge;
         });
+    }
+
+    private void frameDropped(String sessionId, RoomId room, RuntimeException cause) {
+        LogEvents.event(log, GatewayLogEvent.FRAME_DROPPED)
+                .attr(LogFields.SESSION_ID, sessionId)
+                .attr(LogFields.DOC_ID, room.value())
+                .errorType(GatewayErrorType.MALFORMED_FRAME)
+                .cause(cause)
+                .log();
+    }
+
+    /// awareness를 같은 룸의 **다른** 세션에 릴레이한다. 엔진을 경유하지 않는다(판단 1).
+    ///
+    /// **self-echo를 제외한다**(§1.4) — 발신자는 자기 상태를 이미 알고, 되돌리면 클라이언트가 자기
+    /// clientId 항목을 무의미하게 재적용한다.
+    ///
+    /// **viewer의 awareness는 허용한다**(§1.4). `isPermitted`가 막는 것은 update 페이로드, 즉 문서
+    /// 변경이다. 읽는 사람의 커서가 보이는 것은 정상 동작이고, viewer를 숨기면 "누가 보고 있는지 모른 채
+    /// 편집하는" 상태가 되어 협업 맥락이 오히려 손상된다. 그래서 이 경로는 `role`을 보지 않는다 —
+    /// 누락이 아니라 결정이다.
+    private void relayAwareness(SessionBridge sender, String senderId, byte[] payload) {
+        if (payload.length > MAX_AWARENESS_PAYLOAD_BYTES) {
+            // fan-out 증폭 차단. 정상 클라이언트는 여기 닿지 않는다(실제 상태는 수백 바이트).
+            LogEvents.event(log, GatewayLogEvent.AWARENESS_DROPPED)
+                    .attr(LogFields.SESSION_ID, senderId)
+                    .attr(LogFields.DOC_ID, sender.room().value())
+                    .errorType(GatewayErrorType.AWARENESS_TOO_LARGE)
+                    .log();
+            return;
+        }
+        sendToPeers(sender.room(), senderId, codec.encodeAwareness(payload));
+    }
+
+    /// 룸에 새로 들어온 세션이 **기존 peer의 커서를 즉시 보게** 한다(§1.3).
+    ///
+    /// 게이트웨이가 질의자가 되는 이유: y-websocket은 queryAwareness를 WS로 보내지 않는다(실측).
+    /// 릴레이로 구현하면 dead code이고, 신규 접속자는 기존 peer가 다음에 움직일 때까지 그를 보지
+    /// 못한다(하트비트 폴백 최악 ~15초, 가만히 있는 peer는 존재조차 드러나지 않는다).
+    ///
+    /// 게이트웨이는 여기서도 상태를 보관하지 않는다 — 캐시를 재생하는 것이 아니라 **peer들에게
+    /// 되묻는 것**이다. 룸별 최신 awareness를 인메모리 캐시하는 대안은 그 캐시를 채우려면 페이로드를
+    /// 디코딩해야 하므로 §1.2의 무해석 불변식이 깨진다(기각).
+    ///
+    /// ⚠️ **인스턴스 로컬이다.** 게이트웨이 2대에서는 다른 인스턴스의 peer에게 닿지 않는다 —
+    /// 그 확장이 Phase 3의 `awareness:query` 채널이다. Phase 1이 닫는 것은 단일 인스턴스에서의
+    /// join 시 peer 발견까지다.
+    private void queryExistingPeers(RoomId room, String newSessionId) {
+        sendToPeers(room, newSessionId, codec.encodeQueryAwareness());
+    }
+
+    /// 룸의 세션 중 `exceptSessionId`를 뺀 전원에게 프레임을 보낸다. 반환값 = 실제 전송된 세션 수.
+    ///
+    /// 룸 스냅샷을 순회하므로, 전송 실패로 대상 세션이 종료(→`endSession`→`detach`→`rooms.leave`)돼도
+    /// 순회가 안전하다. 그리고 그 종료는 **대상 세션에만** 적용된다 — 수신자 한 명의 실패가 발신자나
+    /// 룸의 나머지에게 번지지 않는다.
+    ///
+    /// 룸 인덱스엔 있으나 `bridges`에 없는 세션은 skip한다 — 두 map의 정합성은 best-effort이고(§1.2)
+    /// awareness의 한 프레임 유실은 다음 커서 이동이 덮는다.
+    private int sendToPeers(RoomId room, String exceptSessionId, byte[] frame) {
+        int sent = 0;
+        for (String peerId : rooms.sessionsIn(room)) {
+            if (peerId.equals(exceptSessionId)) {
+                continue;
+            }
+            SessionBridge peer = bridges.get(peerId);
+            if (peer != null && sendBinary(peer.session(), frame)) {
+                sent++;
+            }
+        }
+        return sent;
     }
 
     @Override
@@ -243,9 +358,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         };
     }
 
-    private void sendBinary(WebSocketSession session, byte[] bytes) {
+    /// 반환값 = 실제로 전송했는가. fan-out이 성공 건수를 세려면 실패를 삼키는 것만으로는 부족하다
+    /// (실패한 대상까지 "릴레이됨"으로 집계하면 처리량 지표가 거짓말을 한다).
+    private boolean sendBinary(WebSocketSession session, byte[] bytes) {
         try {
             session.sendMessage(new BinaryMessage(bytes));
+            return true;
         } catch (SessionLimitExceededException e) {
             // 데코레이터 상한 초과 = 느린 클라이언트. 전송 오류(SEND_FAILED)와 **구분해서** 남긴다 —
             // 원인이 네트워크가 아니라 우리가 정한 상한이고, 처방도 다르다(Phase 4의 수치 재조정).
@@ -256,6 +374,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .cause(e)
                     .log();
             endSession(session, CloseStatus.SERVER_ERROR);
+            return false;
         } catch (IOException e) {
             LogEvents.event(log, GatewayLogEvent.SEND_FAILED)
                     .attr(LogFields.SESSION_ID, session.getId())
@@ -263,6 +382,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .cause(e)
                     .log();
             endSession(session, CloseStatus.SERVER_ERROR);
+            return false;
         }
     }
 
