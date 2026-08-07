@@ -25,6 +25,10 @@ class ResultAndErrorTypePropertyTest {
     /// snake_case: 소문자·숫자·밑줄, 밑줄로 시작/끝 금지, 연속 밑줄 금지.
     private static final Pattern SNAKE_CASE = Pattern.compile("^[a-z][a-z0-9]*(_[a-z0-9]+)*$");
 
+    /// `GatewayErrorType` 엔트리 수 — 갱신은 대시보드·알림 계약 변경을 뜻한다.
+    /// 2026-08-07 M3 Phase 1: 14 → 15 (`send_buffer_exceeded` 추가, 데코레이터 송신 상한 초과).
+    private static final int EXPECTED_ERROR_TYPE_ENTRIES = 15;
+
     /// 핸드셰이크 판정에 사용되는 result 닫힌 집합 (요구사항 6.2).
     /// RESULT_FAIL은 jwt_verify 메트릭 전용이므로 포함하지 않는다.
     private static final Set<String> EXPECTED_RESULT_SET = Set.of(
@@ -85,11 +89,13 @@ class ResultAndErrorTypePropertyTest {
     }
 
     @Property(tries = 100)
-    void gatewayErrorTypeEnumeration_hasExpected14Entries() {
-        // GatewayErrorType이 설계에서 선언한 14개 엔트리를 가지는지 확인.
+    void gatewayErrorTypeEnumeration_isAClosedSet() {
+        // `error.type`은 닫힌 집합이다 — 엔트리 추가는 대시보드·알림 계약 변경이므로 의도적 편집을
+        // 강제한다. 기대값은 이 상수 하나만 고치면 되도록 메서드명에서 분리했다(과거엔 이름에 숫자가
+        // 박혀 있어 엔트리를 늘릴 때마다 메서드명까지 stale이 됐다).
         assertThat(GatewayErrorType.values())
-                .as("GatewayErrorType must have exactly 14 entries")
-                .hasSize(14);
+                .as("GatewayErrorType 엔트리 수는 의도적으로만 바뀐다")
+                .hasSize(EXPECTED_ERROR_TYPE_ENTRIES);
     }
 
     @Property(tries = 100)

@@ -10,6 +10,7 @@ public class SessionMetrics {
 
     static final String WRITE_DROPPED = "ws.write.dropped";   // → ws_write_dropped_total
     static final String SESSION_CLOSED = "ws.session.closed"; // → ws_session_closed_total
+    static final String SEND_QUEUE_EXCEEDED = "ws.send.queue.exceeded"; // → ws_send_queue_exceeded_total
 
     private static final String TAG_REASON = "reason";
     private static final String REASON_VIEWER = "viewer";
@@ -31,5 +32,12 @@ public class SessionMetrics {
     /// bridges.remove()가 일어날 때마다 호출되어야 한다. 미호출 시 세션 누수를 감지할 수 없다.
     public void sessionClosed() {
         registry.counter(SESSION_CLOSED).increment();
+    }
+
+    /// 세션 송신 큐 상한 초과로 세션을 끊은 1건 = **느린 클라이언트**(M3 plan §1.6).
+    /// 이 값이 오르면 상한이 낮은 것인지 클라이언트가 실제로 못 따라오는 것인지를 갈라야 한다 —
+    /// Phase 4의 버퍼·시간 상한 정량화가 직접 이 신호를 근거로 삼는다.
+    public void sendQueueExceeded() {
+        registry.counter(SEND_QUEUE_EXCEEDED).increment();
     }
 }

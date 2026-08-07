@@ -56,6 +56,10 @@ public enum GatewayErrorType {
     /// 클라이언트로의 메시지 전송 실패.
     SEND_FAILED("send_failed"),
 
+    /// 세션 송신 큐가 상한을 초과 — 느린 클라이언트(`ConcurrentWebSocketSessionDecorator` 상한).
+    /// `send_failed`와 구분한다: 원인이 네트워크 오류가 아니라 우리가 정한 버퍼·시간 상한이다.
+    SEND_BUFFER_EXCEEDED("send_buffer_exceeded"),
+
     // ── 비즈니스 로직 ──
 
     /// viewer 읽기 전용 세션에서 쓰기 시도.

@@ -18,6 +18,8 @@ import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
+import org.springframework.web.socket.handler.SessionLimitExceededException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -30,13 +32,26 @@ import java.util.concurrent.ConcurrentHashMap;
 ///
 /// ## 동시성 계약 (Concurrency Contract)
 ///
-/// **WS 단일 writer 불변식(§D-6)**: WS send는 gRPC 응답 StreamObserver(스트림당 serial 호출)에서만 한다.
-/// 인바운드 핸들러는 gRPC로 forward만 하고 WS로 직접 쓰지 않으므로 동시 send가 없다 — 한 세션에 writer는
-/// 응답 콜백 하나뿐이다. 위반 시 `ConcurrentWebSocketSessionDecorator`로 감싸야 한다.
+/// **WS send 직렬화(§D-6)**: 아웃바운드 WS send는 전부 `ConcurrentWebSocketSessionDecorator`를 통과한다.
+///
+/// 이전 계약은 "한 세션의 writer는 gRPC 응답 콜백 하나뿐"이라는 **단일 writer 불변식**이었고, 그래서
+/// 데코레이터가 필요 없었다. M3 awareness fan-out이 그 불변식을 정면으로 깬다 — 같은 룸에 있는
+/// **다른 세션의 인바운드 스레드**가 내 세션에 쓰기 때문에 writer가 N개가 된다. 동시 send는 컨테이너
+/// 레벨에서 `IllegalStateException`(Tomcat: 진행 중인 write에 겹쳐 쓰기)으로 터지고, 그 실패는
+/// 룸에 사람이 모일 때만 나타나므로 단위 테스트로 잡히지 않는다. 그래서 fan-out 코드보다 **먼저**
+/// 감싼다(M3 plan §1.1) — 순서를 뒤집으면 그 사이 모든 fan-out 코드가 미검증 동시성 위에 쌓인다.
+///
+/// 초과 정책은 데코레이터 기본값 **TERMINATE**를 쓴다(`OverflowStrategy.DROP` 금지). 같은 세션이
+/// 문서 sync 프레임도 나르므로, update를 조용히 버리면 그 클라이언트는 **수렴이 깨진 채 살아남는다**
+/// (에러도 없고 재동기화 계기도 없다). 끊으면 재접속 → SyncStep1 → 전체 재동기화로 복구되므로
+/// 드롭보다 종료가 정확성에 유리하다. awareness만 있는 세션이라면 DROP이 우아하겠지만, 프레임
+/// 종류로 정책을 갈라놓을 수 있는 지점이 아니다(데코레이터는 세션 단위).
 ///
 /// **요청 StreamObserver(toEngine) 직렬화**:
 /// - `computeIfPresent`가 onNext와 onCompleted(bridges.remove)를 상호 배제한다
 /// - Spring WS 스펙이 세션당 단일 스레드 메시지 처리를 보장 → onNext 동시 호출 없음
+/// - ⚠️ 그래서 `computeIfPresent` 람다 안에서는 **다른 세션에 write하지 않는다** — CHM 키 락을 쥔 채
+///   I/O를 하면 (a) VT pinning, (b) 같은 룸 세션끼리 지연 전파가 된다. fan-out은 원자 구간 밖에서 한다.
 ///
 /// **응답 StreamObserver(toClient) 직렬화**:
 /// - gRPC 런타임이 단일 observer에 대해 순차 호출을 보장(grpc-java 계약)
@@ -49,6 +64,24 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(DocWebSocketHandler.class);
+
+    /// 아웃바운드 단일 프레임의 실질 상한. 엔진 `ServerFrame`은 게이트웨이 gRPC 채널의 수신 상한
+    /// (grpc-java 기본 4MiB)에 묶이고, 초기 sync-step2는 스냅샷 상한(doc-service `MAX_SNAPSHOT_BYTES`,
+    /// ≈4MiB)까지 자란다 — 즉 정상 트래픽에도 4MiB급 프레임이 한 개 들어올 수 있다.
+    private static final int MAX_OUTBOUND_FRAME_BYTES = 4 * 1024 * 1024;
+
+    /// 데코레이터 송신 큐 상한. **최대 프레임 하나보다 반드시 커야 한다** — 낮추면 느린 클라이언트가
+    /// *정상* 초기 동기화 중에 끊긴다(자기 발에 총 쏘는 상한). 최대 프레임 1개 + 후속 여유로 2배.
+    ///
+    /// ⚠️ 이 상한이 묶는 것은 **병리적 클라이언트 1개**의 힙 점유다. 세션 수 × 이 값의 총합은
+    /// 여기서 제어되지 않는다 — 그건 Phase 4의 전역 세션 캡 몫이다(M3 plan §Phase 4).
+    /// ⚠️ 임시값 — Phase 4에서 정량화하고 근거는 Phase 6 부하 측정이 붙인다.
+    static final int SEND_BUFFER_SIZE_LIMIT_BYTES = 2 * MAX_OUTBOUND_FRAME_BYTES;
+
+    /// 데코레이터 송신 시간 상한 — 한 세션의 send가 이 시간 넘게 진행 중이면 세션을 끊는다.
+    /// 느린 소비자가 룸 전체의 fan-out 스레드를 붙잡는 것을 막는 값이다(§1.1이 Phase 4 백프레셔로 예고).
+    /// ⚠️ 임시값 — Phase 4에서 정량화.
+    static final int SEND_TIME_LIMIT_MS = 10_000;
 
     private final EngineClient engineClient;
     private final SessionMetrics sessionMetrics;
@@ -71,15 +104,17 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("session identity not resolved"));
             return;
         }
+        // 이 지점 이후 게이트웨이는 원본 세션에 직접 쓰지 않는다 — 모든 아웃바운드가 데코레이터를 통과한다(§D-6).
+        WebSocketSession guarded = guardSends(session);
         // SerializingStreamObserver로 감싸 gRPC 응답 콜백의 onNext/onError/onCompleted 직렬화를 강제한다.
         // gRPC 런타임이 순차 호출을 보장하지만, 이중 완료 방지 및 구현 버그 방어를 위한 안전망(Req 11.2, 11.3).
         StreamObserver<ServerFrame> toClient =
-                new SerializingStreamObserver<>(engineResponseObserver(session, roomId));
+                new SerializingStreamObserver<>(engineResponseObserver(guarded, roomId));
         // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
         try {
             StreamObserver<ClientFrame> toEngine =
                     engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
-            bridges.put(session.getId(), new SessionBridge(roomId, role.get(), toEngine));
+            bridges.put(session.getId(), new SessionBridge(roomId, role.get(), guarded, toEngine));
         } catch (RuntimeException e) {
             // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
             // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
@@ -89,8 +124,16 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .errorType(GatewayErrorType.ENGINE_UNAVAILABLE)
                     .cause(e)
                     .log();
-            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
+            closeQuietly(guarded, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
         }
+    }
+
+    /// 세션의 아웃바운드를 큐잉·직렬화하는 데코레이터로 감싼다 — 클래스 주석 §D-6의 처방.
+    /// 상한 초과 시 데코레이터는 `SessionLimitExceededException`을 던지고 이후 send를 무음 처리하므로,
+    /// 호출부(`sendBinary`)가 그 예외를 세션 종료로 번역한다.
+    private static WebSocketSession guardSends(WebSocketSession session) {
+        return new ConcurrentWebSocketSessionDecorator(
+                session, SEND_TIME_LIMIT_MS, SEND_BUFFER_SIZE_LIMIT_BYTES);
     }
 
     @Override
@@ -200,6 +243,16 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     private void sendBinary(WebSocketSession session, byte[] bytes) {
         try {
             session.sendMessage(new BinaryMessage(bytes));
+        } catch (SessionLimitExceededException e) {
+            // 데코레이터 상한 초과 = 느린 클라이언트. 전송 오류(SEND_FAILED)와 **구분해서** 남긴다 —
+            // 원인이 네트워크가 아니라 우리가 정한 상한이고, 처방도 다르다(Phase 4의 수치 재조정).
+            sessionMetrics.sendQueueExceeded();
+            LogEvents.event(log, GatewayLogEvent.SEND_LIMIT_EXCEEDED)
+                    .attr(LogFields.SESSION_ID, session.getId())
+                    .errorType(GatewayErrorType.SEND_BUFFER_EXCEEDED)
+                    .cause(e)
+                    .log();
+            endSession(session, CloseStatus.SERVER_ERROR);
         } catch (IOException e) {
             LogEvents.event(log, GatewayLogEvent.SEND_FAILED)
                     .attr(LogFields.SESSION_ID, session.getId())
@@ -255,6 +308,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         }
     }
 
-    private record SessionBridge(RoomId room, SessionRole role, StreamObserver<ClientFrame> toEngine) {
+    /// `session`은 **데코레이터로 감싼** 세션이다(원본이 아니다) — 게이트웨이가 이 세션에 쓰는 모든
+    /// 경로가 §D-6의 직렬화를 통과하도록, 원본 참조를 여기 보관하지 않는다.
+    private record SessionBridge(
+            RoomId room,
+            SessionRole role,
+            WebSocketSession session,
+            StreamObserver<ClientFrame> toEngine) {
     }
 }

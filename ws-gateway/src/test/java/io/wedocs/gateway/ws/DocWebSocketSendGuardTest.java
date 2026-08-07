@@ -1,0 +1,118 @@
+package io.wedocs.gateway.ws;
+
+import com.google.protobuf.ByteString;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.wedocs.gateway.handshake.HandshakeAttributes;
+import io.wedocs.gateway.handshake.RoomId;
+import io.wedocs.gateway.handshake.SessionRole;
+import io.wedocs.proto.crdt.ServerFrame;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/// 아웃바운드 송신 경로가 `ConcurrentWebSocketSessionDecorator`를 통과하는지, 그리고 그 데코레이터가
+/// 새로 만든 실패 모드(송신 상한 초과)를 전송 오류와 **구분해서** 처리하는지 검증한다.
+/// (M3 plan §1.1 — awareness fan-out보다 먼저 들어가야 하는 커밋)
+class DocWebSocketSendGuardTest {
+
+    private static final String ROOM = "11111111-1111-4111-8111-111111111111";
+
+    private StubEngineClient engineClient;
+    private SimpleMeterRegistry registry;
+    private DocWebSocketHandler handler;
+
+    @BeforeEach
+    void setUp() {
+        engineClient = new StubEngineClient();
+        registry = new SimpleMeterRegistry();
+        handler = new DocWebSocketHandler(engineClient, new SessionMetrics(registry));
+    }
+
+    @Test
+    @DisplayName("게이트웨이가 세션에 직접 쓰지 않는다 — 아웃바운드는 데코레이터를 통과해 delegate에 도달")
+    void outboundFrame_passesThroughDecorator_toDelegate() {
+        // Given: 세션 수립 — 핸들러는 원본이 아니라 감싼 세션을 들고 있어야 한다
+        RecordingWsSession session = openSession();
+
+        // When: 엔진이 update를 내려보낸다(엔진 → 브라우저 방향)
+        engineClient.latest().toClient().onNext(
+                ServerFrame.newBuilder().setUpdate(ByteString.copyFrom(new byte[]{0x55, 0x66})).build());
+
+        // Then: 프레임이 delegate까지 도달한다(데코레이터가 큐잉만 하고 삼키지 않는다)
+        assertThat(session.sent).containsExactly(new byte[]{0x00, 0x02, 0x02, 0x55, 0x66});
+    }
+
+    @Test
+    @DisplayName("핸들러가 감싸는 대상은 ConcurrentWebSocketSessionDecorator이고 상한이 배선돼 있다")
+    void establishedSession_isWrappedWithConfiguredLimits() {
+        // Given/When: 상한 상수로 감싼 데코레이터를 직접 만들어 계약을 고정한다.
+        // (핸들러 내부의 감싼 세션은 외부에 노출되지 않으므로, 상한 값 자체를 회귀로 묶는다)
+        RecordingWsSession delegate = new RecordingWsSession();
+        WebSocketSession guarded = new ConcurrentWebSocketSessionDecorator(
+                delegate,
+                DocWebSocketHandler.SEND_TIME_LIMIT_MS,
+                DocWebSocketHandler.SEND_BUFFER_SIZE_LIMIT_BYTES);
+
+        // Then: 송신 큐 상한이 최대 아웃바운드 프레임(4MiB)보다 크다 —
+        // 이보다 작으면 느린 클라이언트가 *정상* 초기 동기화 중에 끊긴다.
+        assertThat(((ConcurrentWebSocketSessionDecorator) guarded).getBufferSizeLimit())
+                .isGreaterThan(4 * 1024 * 1024);
+        assertThat(((ConcurrentWebSocketSessionDecorator) guarded).getSendTimeLimit())
+                .isEqualTo(DocWebSocketHandler.SEND_TIME_LIMIT_MS);
+    }
+
+    @Test
+    @DisplayName("송신 상한 초과는 세션을 끊고 ws.send.queue.exceeded로 집계된다(전송 오류와 구분)")
+    void sendLimitExceeded_closesSessionAndCountsQueueExceeded() {
+        // Given: delegate가 데코레이터 상한 초과 예외를 던지는 세션
+        RecordingWsSession session = openSession();
+        session.failMode = RecordingWsSession.FailMode.LIMIT;
+
+        // When: 엔진이 프레임을 내려보낸다
+        engineClient.latest().toClient().onNext(
+                ServerFrame.newBuilder().setUpdate(ByteString.copyFrom(new byte[]{0x01})).build());
+
+        // Then: 세션 종료 + 전용 카운터 증분 + 엔진 스트림 정리(누수 방지)
+        assertThat(session.closeStatus).isEqualTo(CloseStatus.SERVER_ERROR);
+        assertThat(counter(SessionMetrics.SEND_QUEUE_EXCEEDED)).isEqualTo(1.0);
+        assertThat(counter(SessionMetrics.SESSION_CLOSED)).isEqualTo(1.0);
+        assertThat(engineClient.latest().toEngine().completedCount).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("전송 오류(IOException)는 상한 초과로 집계되지 않는다 — 두 실패 모드의 구분 회귀")
+    void sendIoFailure_doesNotCountAsQueueExceeded() {
+        // Given: delegate가 전송 계층 오류를 던지는 세션
+        RecordingWsSession session = openSession();
+        session.failMode = RecordingWsSession.FailMode.IO;
+
+        // When
+        engineClient.latest().toClient().onNext(
+                ServerFrame.newBuilder().setUpdate(ByteString.copyFrom(new byte[]{0x01})).build());
+
+        // Then: 세션은 끊기지만 상한 카운터는 오르지 않는다(원인 오분류 방지)
+        assertThat(session.closeStatus).isEqualTo(CloseStatus.SERVER_ERROR);
+        assertThat(counter(SessionMetrics.SEND_QUEUE_EXCEEDED)).isZero();
+        assertThat(counter(SessionMetrics.SESSION_CLOSED)).isEqualTo(1.0);
+    }
+
+    // ─── 헬퍼 ───
+
+    private RecordingWsSession openSession() {
+        RecordingWsSession session = new RecordingWsSession();
+        session.getAttributes().put(HandshakeAttributes.ROOM_ATTRIBUTE, new RoomId(ROOM));
+        session.getAttributes().put(SessionRole.ATTRIBUTE, SessionRole.EDITOR);
+        handler.afterConnectionEstablished(session);
+        return session;
+    }
+
+    private double counter(String name) {
+        var counter = registry.find(name).counter();
+        return counter == null ? 0.0 : counter.count();
+    }
+}

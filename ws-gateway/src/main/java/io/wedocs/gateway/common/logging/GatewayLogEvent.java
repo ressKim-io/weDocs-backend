@@ -62,7 +62,7 @@ public enum GatewayLogEvent {
             Set.of(LogFields.DOC_ID, LogFields.USER_HASH, LogFields.ERROR_TYPE),
             "ws handshake rejected: authorization backend unavailable"),
 
-    // ── 비핸드셰이크 이벤트 (8개) ──
+    // ── 비핸드셰이크 이벤트 (9개) ──
 
     /// 인가 gRPC 호출 실패 — CheckPermission 예외.
     AUTHZ_CHECK_FAILED(
@@ -105,6 +105,12 @@ public enum GatewayLogEvent {
             "ws_send_failed", Level.WARN, null, null,
             Set.of(LogFields.SESSION_ID, LogFields.ERROR_TYPE),
             "ws send failed"),
+
+    /// 송신 큐 상한 초과 — 느린 클라이언트로 세션 종료(데코레이터 버퍼·시간 상한).
+    SEND_LIMIT_EXCEEDED(
+            "ws_send_limit_exceeded", Level.WARN, null, null,
+            Set.of(LogFields.SESSION_ID, LogFields.ERROR_TYPE),
+            "ws send limit exceeded: session terminated"),
 
     /// 프레임 이상 — 프로토콜 계약 위반 감지(예: dual_field).
     FRAME_ANOMALY(
