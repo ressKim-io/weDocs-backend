@@ -59,7 +59,9 @@ public class SessionMetrics {
         registry.counter(SEND_QUEUE_EXCEEDED).increment();
     }
 
-    /// awareness 릴레이 처리량 — **실제로 전달된 대상 세션 수**(fan-out 간선 수)를 더한다.
+    /// awareness 릴레이 처리량 — **송신이 수락된 대상 세션 수**(fan-out 간선 수)를 더한다.
+    /// "상대에게 도달한 수"가 아니다: 데코레이터가 큐잉하면 수락 시점과 전송 시점이 갈린다.
+    ///
     /// 프레임 수가 아니라 간선 수인 이유: 룸이 커질수록 같은 프레임 하나의 비용이 N배가 되므로,
     /// 프레임 수만 세면 부하를 과소평가한다.
     ///

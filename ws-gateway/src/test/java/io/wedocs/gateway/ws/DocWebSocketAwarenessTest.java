@@ -12,6 +12,8 @@ import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -225,6 +227,46 @@ class DocWebSocketAwarenessTest {
         assertThat(first.sent).containsExactly(QUERY_AWARENESS_FRAME);
         assertThat(second.sent).containsExactly(QUERY_AWARENESS_FRAME);
         assertThat(joiner.sent).isEmpty();
+    }
+
+    @Test
+    @DisplayName("기존 peer가 많아도 상한(MAX_QUERIED_PEERS_ON_JOIN)명에게만 질의한다 — N² 버스트 선형화")
+    void join_queriesAtMostCappedNumberOfPeers() {
+        // Given: 상한보다 많은 기존 peer
+        int peerCount = DocWebSocketHandler.MAX_QUERIED_PEERS_ON_JOIN + 3;
+        List<RecordingWsSession> peers = new ArrayList<>();
+        for (int i = 0; i < peerCount; i++) {
+            peers.add(openSession(ROOM_A, SessionRole.EDITOR));
+        }
+        drainQueryAwareness(peers.toArray(new RecordingWsSession[0]));
+
+        // When: 한 명이 더 붙는다
+        openSession(ROOM_A, SessionRole.EDITOR);
+
+        // Then: 전원이 아니라 상한만큼만 질의를 받는다.
+        // 응답 하나가 룸의 awareness 전경을 담으므로(y-websocket getStates 전체 인코딩) 표본으로 충분하고,
+        // 전원 질의는 N개 응답 × N명 릴레이 = N² 프레임 버스트가 된다.
+        long queried = peers.stream().filter(peer -> !peer.sent.isEmpty()).count();
+        assertThat(queried).isEqualTo(DocWebSocketHandler.MAX_QUERIED_PEERS_ON_JOIN);
+        // 질의받은 peer는 정확히 queryAwareness 1건만 받는다
+        peers.stream().filter(peer -> !peer.sent.isEmpty())
+                .forEach(peer -> assertThat(peer.sent).containsExactly(QUERY_AWARENESS_FRAME));
+    }
+
+    @Test
+    @DisplayName("릴레이는 상한을 받지 않는다 — awareness는 룸 전원에게 가야 한다(표본이 아니다)")
+    void relay_isNotCappedLikeJoinQuery() throws Exception {
+        int peerCount = DocWebSocketHandler.MAX_QUERIED_PEERS_ON_JOIN + 3;
+        RecordingWsSession sender = openSession(ROOM_A, SessionRole.EDITOR);
+        List<RecordingWsSession> peers = new ArrayList<>();
+        for (int i = 0; i < peerCount; i++) {
+            peers.add(openSession(ROOM_A, SessionRole.EDITOR));
+        }
+        drainQueryAwareness(peers.toArray(new RecordingWsSession[0]));
+
+        handler.handleMessage(sender, new BinaryMessage(AWARENESS_FRAME));
+
+        assertThat(peers).allSatisfy(peer -> assertThat(peer.sent).containsExactly(AWARENESS_FRAME));
     }
 
     @Test

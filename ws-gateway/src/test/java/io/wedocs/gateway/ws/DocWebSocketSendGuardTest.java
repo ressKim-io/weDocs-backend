@@ -9,6 +9,7 @@ import io.wedocs.proto.crdt.ServerFrame;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -21,6 +22,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DocWebSocketSendGuardTest {
 
     private static final String ROOM = "11111111-1111-4111-8111-111111111111";
+    /// [messageAwareness=1, varBuffer({0xAA,0xBB})]
+    private static final byte[] AWARENESS_FRAME = {0x01, 0x02, (byte) 0xAA, (byte) 0xBB};
+    /// 블로킹 어서션 대기 — "막혔다/안 막혔다"를 가르는 값이라 정상 경로보다 넉넉히.
+    private static final long BLOCK_TIMEOUT_MS = 5_000;
 
     private StubEngineClient engineClient;
     private SimpleMeterRegistry registry;
@@ -45,6 +50,42 @@ class DocWebSocketSendGuardTest {
 
         // Then: 프레임이 delegate까지 도달한다(데코레이터가 큐잉만 하고 삼키지 않는다)
         assertThat(session.sent).containsExactly(new byte[]{0x00, 0x02, 0x02, 0x55, 0x66});
+    }
+
+    @Test
+    @DisplayName("한 대상에 대한 동시 fan-out은 delegate에 겹쳐 들어가지 않고 두 번째 발신자를 막지 않는다")
+    void concurrentFanOutToSameTarget_isQueuedNotBlocked() throws Exception {
+        // 이 테스트가 데코레이터 배선을 **죽인다**: guardSends를 없애고 원본 세션을 쓰면 두 번째
+        // 발신 스레드도 delegate의 같은 지점에서 막혀 `second.isAlive()` 어서션이 실패한다.
+        // Given: 느린 대상 T + 발신자 2명(같은 룸)
+        RecordingWsSession target = openSession();
+        RecordingWsSession senderA = openSession();
+        RecordingWsSession senderB = openSession();
+        clearSent(target, senderA, senderB);
+        target.blockSends = true;
+
+        // When: A의 fan-out이 T의 delegate 안에서 멈춘다(그 스레드가 데코레이터 flush 락을 쥔다)
+        Thread first = new Thread(() -> relayQuietly(senderA));
+        first.start();
+        assertThat(target.awaitEntered(BLOCK_TIMEOUT_MS))
+                .as("A의 fan-out이 T의 delegate에 진입해야 한다")
+                .isTrue();
+
+        // Then: B의 fan-out은 막히지 않고 반환한다 — 데코레이터가 큐에 넣기 때문이다.
+        Thread second = new Thread(() -> relayQuietly(senderB));
+        second.start();
+        second.join(BLOCK_TIMEOUT_MS);
+        assertThat(second.isAlive())
+                .as("B의 fan-out이 T의 느린 delegate에 붙잡혔다 — 데코레이터가 송신 경로에 없다")
+                .isFalse();
+
+        // And: delegate 진입이 겹치지 않았고, 큐에 쌓인 프레임도 유실되지 않는다.
+        target.releaseSends();
+        first.join(BLOCK_TIMEOUT_MS);
+        assertThat(target.maxConcurrentEntries())
+                .as("delegate에 동시 진입이 발생했다 — WS 동시 send 계약 위반")
+                .isEqualTo(1);
+        assertThat(target.sent).hasSize(2);
     }
 
     @Test
@@ -109,6 +150,21 @@ class DocWebSocketSendGuardTest {
         session.getAttributes().put(SessionRole.ATTRIBUTE, SessionRole.EDITOR);
         handler.afterConnectionEstablished(session);
         return session;
+    }
+
+    /// awareness 프레임을 넣어 fan-out을 유발한다(별 스레드에서 호출되므로 예외를 삼키지 않고 감싼다).
+    private void relayQuietly(RecordingWsSession sender) {
+        try {
+            handler.handleMessage(sender, new BinaryMessage(AWARENESS_FRAME));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void clearSent(RecordingWsSession... sessions) {
+        for (RecordingWsSession session : sessions) {
+            session.sent.clear();
+        }
     }
 
     private double counter(String name) {

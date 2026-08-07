@@ -78,8 +78,19 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// ⚠️ 임시값 — Phase 4에서 정량화하고 근거는 Phase 6 부하 측정이 붙인다.
     static final int SEND_BUFFER_SIZE_LIMIT_BYTES = 2 * MAX_OUTBOUND_FRAME_BYTES;
 
-    /// 데코레이터 송신 시간 상한 — 한 세션의 send가 이 시간 넘게 진행 중이면 세션을 끊는다.
-    /// 느린 소비자가 룸 전체의 fan-out 스레드를 붙잡는 것을 막는 값이다(§1.1이 Phase 4 백프레셔로 예고).
+    /// 데코레이터 송신 시간 상한.
+    ///
+    /// ⚠️ **이 값은 진행 중인 write를 중단시키지 않는다.** 실측(spring-websocket 7.0.8 바이트코드):
+    /// `checkSessionLimits()`는 `tryFlushMessageBuffer()`가 **false를 반환한** 분기에서만 호출된다.
+    /// 즉 상한 위반을 발화시키는 것은 flush 락을 **못 잡은 다른** 스레드이고, delegate write에 실제로
+    /// 막혀 있는 스레드는 이 상한과 무관하게 계속 막혀 있다(그쪽의 실질 상한은 컨테이너의
+    /// blocking send timeout이다).
+    ///
+    /// 그래서 이 값의 실제 성질은 "느린 세션을 **다음 발신자가** 발견해 끊는 임계"다.
+    /// fan-out 스레드(= 발신자의 WS 인바운드 스레드)가 느린 peer에 붙잡히는 문제는 이 값으로 해결되지
+    /// **않는다** — 처방은 fan-out을 발신자 스레드에서 떼어내는 것이고 그건 Phase 4 몫이다.
+    /// 이 구분을 지우면 Phase 4가 숫자만 재조정하고 진짜 처방을 건너뛴다.
+    ///
     /// ⚠️ 임시값 — Phase 4에서 정량화.
     static final int SEND_TIME_LIMIT_MS = 10_000;
 
@@ -95,6 +106,28 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     ///
     /// ⚠️ 이것은 **크기** 상한이다. **빈도** 제어(N ms 윈도우 coalescing)는 Phase 4 몫이다.
     static final int MAX_AWARENESS_PAYLOAD_BYTES = 64 * 1024;
+
+    /// join 시 질의할 기존 peer 수 상한(§1.3).
+    ///
+    /// **원리상 1명으로 충분하다** — y-websocket의 queryAwareness 핸들러는 자기 상태가 아니라
+    /// `awareness.getStates()` **전체**(자기가 아는 모든 clientId)를 인코딩해 응답한다
+    /// (실측 2026-08-07 `y-websocket.js:53~68`). 즉 **응답 하나가 룸의 awareness 전경을 담는다.**
+    ///
+    /// 그런데도 1이 아닌 이유: 방금 들어와 아직 아무 awareness도 받지 못한 peer를 고르면 응답이
+    /// 자기 자신뿐인 부분 답이 된다. 소수를 질의하면 그 확률이 곱으로 떨어진다.
+    ///
+    /// **전원(N명)을 질의하지 않는 것이 이 상한의 본론이다.** 응답은 질의자를 특정할 수 없어 룸
+    /// 전원에게 릴레이되므로, N명 질의는 N개 응답 × N명 = **N² 프레임 버스트**가 된다. 재접속을
+    /// 반복하면 그 버스트를 반복 유발할 수 있고, 그건 `MAX_AWARENESS_PAYLOAD_BYTES`가 막겠다고
+    /// 선언한 시나리오("클라이언트 1명이 룸을 비운다")를 **join 축으로 재현**하는 것이다.
+    /// 상한을 두면 버스트가 O(K·N)으로 선형화된다.
+    ///
+    /// 계획서는 이 N²를 Phase 3 §3.2 각주에서 "Phase 4 coalescing 확인 대상"으로만 다뤘다.
+    /// per-doc 세션 캡이 없는 Phase 1에서 N에 상한이 없으므로 여기서 선형화해 둔다.
+    static final int MAX_QUERIED_PEERS_ON_JOIN = 3;
+
+    /// `sendToPeers`의 대상 수 무제한 — 릴레이는 룸 전원에게 가야 한다(질의와 달리 표본이 아니다).
+    private static final int ALL_PEERS = Integer.MAX_VALUE;
 
     private final EngineClient engineClient;
     private final SessionMetrics sessionMetrics;
@@ -243,7 +276,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             return;
         }
         sessionMetrics.awarenessRelayed(
-                sendToPeers(sender.room(), senderId, codec.encodeAwareness(payload)));
+                sendToPeers(sender.room(), senderId, codec.encodeAwareness(payload), ALL_PEERS));
     }
 
     /// 룸에 새로 들어온 세션이 **기존 peer의 커서를 즉시 보게** 한다(§1.3).
@@ -259,12 +292,15 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// ⚠️ **인스턴스 로컬이다.** 게이트웨이 2대에서는 다른 인스턴스의 peer에게 닿지 않는다 —
     /// 그 확장이 Phase 3의 `awareness:query` 채널이다. Phase 1이 닫는 것은 단일 인스턴스에서의
     /// join 시 peer 발견까지다.
+    /// ⚠️ 전원이 아니라 **최대 `MAX_QUERIED_PEERS_ON_JOIN`명**에게만 질의한다 — 응답 하나가 룸의
+    /// awareness 전경을 담으므로 전원 질의는 N² 버스트만 만든다(상수 주석에 상세).
     private void queryExistingPeers(RoomId room, String newSessionId) {
-        sessionMetrics.awarenessQuerySent(
-                sendToPeers(room, newSessionId, codec.encodeQueryAwareness()));
+        sessionMetrics.awarenessQuerySent(sendToPeers(
+                room, newSessionId, codec.encodeQueryAwareness(), MAX_QUERIED_PEERS_ON_JOIN));
     }
 
-    /// 룸의 세션 중 `exceptSessionId`를 뺀 전원에게 프레임을 보낸다. 반환값 = 실제 전송된 세션 수.
+    /// 룸의 세션 중 `exceptSessionId`를 뺀 대상에게 프레임을 보낸다(최대 `maxTargets`명).
+    /// 반환값 = 실제로 송신이 수락된 세션 수.
     ///
     /// 룸 스냅샷을 순회하므로, 전송 실패로 대상 세션이 종료(→`endSession`→`detach`→`rooms.leave`)돼도
     /// 순회가 안전하다. 그리고 그 종료는 **대상 세션에만** 적용된다 — 수신자 한 명의 실패가 발신자나
@@ -272,9 +308,12 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     ///
     /// 룸 인덱스엔 있으나 `bridges`에 없는 세션은 skip한다 — 두 map의 정합성은 best-effort이고(§1.2)
     /// awareness의 한 프레임 유실은 다음 커서 이동이 덮는다.
-    private int sendToPeers(RoomId room, String exceptSessionId, byte[] frame) {
+    private int sendToPeers(RoomId room, String exceptSessionId, byte[] frame, int maxTargets) {
         int sent = 0;
         for (String peerId : rooms.sessionsIn(room)) {
+            if (sent >= maxTargets) {
+                break;
+            }
             if (peerId.equals(exceptSessionId)) {
                 continue;
             }
@@ -370,8 +409,10 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         };
     }
 
-    /// 반환값 = 실제로 전송했는가. fan-out이 성공 건수를 세려면 실패를 삼키는 것만으로는 부족하다
-    /// (실패한 대상까지 "릴레이됨"으로 집계하면 처리량 지표가 거짓말을 한다).
+    /// 반환값 = **송신이 수락되었는가**. "상대에게 도달했는가"가 아니다 — 데코레이터는 다른 스레드가
+    /// flush 락을 쥐고 있으면 큐에 넣고 정상 반환하므로, true는 큐 수락까지만 보장한다.
+    /// 그래도 실패(끊긴 클라이언트)와는 구분해야 한다: 실패한 대상까지 "릴레이됨"으로 집계하면
+    /// 처리량 지표가 거짓말을 한다.
     private boolean sendBinary(WebSocketSession session, byte[] bytes) {
         try {
             session.sendMessage(new BinaryMessage(bytes));
