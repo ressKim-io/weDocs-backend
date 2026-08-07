@@ -31,8 +31,13 @@ final class YProtocolCodec {
     static final int SYNC_STEP2 = 1; // diff update
     static final int SYNC_UPDATE = 2; // update
 
-    /// 브라우저 → 엔진. messageSync만 ClientFrame으로 번역하고,
-    /// awareness/auth/queryAwareness/미인식은 무시한다(empty, 에러 금지 — §D-7).
+    /// 브라우저 → 엔진. messageSync만 ClientFrame으로 번역하고, 그 밖의 top-level 타입은
+    /// 무시한다(empty, 에러 금지 — §D-7).
+    ///
+    /// ⚠️ empty가 곧 "버린다"는 뜻은 아니다. awareness(1)는 엔진을 통과하지 않고 게이트웨이가
+    /// 룸에 릴레이하며(M3 §1.3), 그 분기는 호출부가 [#decodeAwareness]로 먼저 판정한다.
+    /// 여기서 empty가 되는 것은 "**엔진으로 갈 프레임이 아니다**"라는 뜻이다.
+    /// auth(2)·queryAwareness(3)·미인식은 여전히 어디로도 가지 않는다.
     Optional<ClientFrame> decodeInbound(byte[] wsMessage, String docId) {
         Lib0.Decoder decoder = new Lib0.Decoder(wsMessage);
         if (decoder.readVarUint() != MESSAGE_SYNC) {
@@ -71,6 +76,51 @@ final class YProtocolCodec {
             return Optional.of(syncMessage(SYNC_UPDATE, frame.getUpdate()));
         }
         return Optional.empty();
+    }
+
+    /// 브라우저 → 게이트웨이. awareness(1) 프레임의 **페이로드 바이트를 그대로** 꺼낸다.
+    /// 다른 top-level 타입이면 empty(호출부가 sync 경로로 넘긴다).
+    ///
+    /// 게이트웨이는 이 페이로드를 **해석하지 않는다** — 여기서 확인하는 것은 lib0 프레이밍 유효성뿐이고
+    /// 안의 clientId·상태는 불투명 바이트로 릴레이된다(M3 §1.2의 무해석 불변식). 해석하기 시작하면
+    /// ADR-0011 기각사유①을 무력화한 논거와 §1.5가 신원 stamp를 "파싱 비용"으로 기각한 논거가
+    /// 동시에 무너진다.
+    ///
+    /// 원본 바이트를 통째로 되돌리지 않고 디코드 → 재인코드하는 이유: 프레이밍이 깨진 프레임
+    /// (선언 길이 > 실제 바이트, 뒤에 붙은 잡음)을 룸 전체에 증폭시키지 않는다. N명에게 손상 프레임을
+    /// 뿌리면 N개의 클라이언트 파서가 동시에 넘어진다.
+    Optional<byte[]> decodeAwareness(byte[] wsMessage) {
+        Lib0.Decoder decoder = new Lib0.Decoder(wsMessage);
+        if (decoder.readVarUint() != MESSAGE_AWARENESS) {
+            return Optional.empty();
+        }
+        return Optional.of(decoder.readVarUint8Array());
+    }
+
+    /// 게이트웨이 → 브라우저. awareness 페이로드를 y-websocket이 읽는 프레이밍으로 감싼다.
+    byte[] encodeAwareness(byte[] payload) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Lib0.writeVarUint(out, MESSAGE_AWARENESS);
+        Lib0.writeVarUint8Array(out, payload);
+        return out.toByteArray();
+    }
+
+    /// 게이트웨이 → 브라우저. **페이로드가 없는** 타입 3 프레임 = "네가 아는 awareness 상태를 전부 보내라".
+    ///
+    /// 이것은 릴레이가 아니라 **게이트웨이 발신**이다. y-websocket 3.0.0은 queryAwareness를 WS로
+    /// 보내지 않는다(`bc.publish` = 같은 브라우저 탭 간 BroadcastChannel 전용, 실측 2026-08-07
+    /// `y-websocket.js:458~465`) — 그래서 릴레이로 구현하면 컴파일도 되고 테스트도 통과하는데
+    /// **아무도 보내지 않으므로 dead code**다. 신규 접속자는 기존 peer가 다음에 움직일 때까지
+    /// (하트비트 폴백 최악 ~15초) 그를 보지 못한다.
+    ///
+    /// 반대로 **받는** 쪽 핸들러는 이미 등록돼 있다(`messageHandlers[3]` → 전체 상태를 awareness(1)로
+    /// 응답, `websocket.onmessage`가 그 응답을 WS로 되돌려보낸다). 그래서 클라이언트 변경 없이
+    /// 게이트웨이가 질의자가 될 수 있다. 게이트웨이는 여기서도 상태를 보관하지 않는다 —
+    /// 캐시가 아니라 **peer들에게 되묻는 것**이다.
+    byte[] encodeQueryAwareness() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Lib0.writeVarUint(out, MESSAGE_QUERY_AWARENESS);
+        return out.toByteArray();
     }
 
     private byte[] syncMessage(int syncType, ByteString payload) {
