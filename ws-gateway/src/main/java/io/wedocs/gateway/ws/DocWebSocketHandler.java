@@ -106,6 +106,9 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     public DocWebSocketHandler(EngineClient engineClient, SessionMetrics sessionMetrics) {
         this.engineClient = engineClient;
         this.sessionMetrics = sessionMetrics;
+        // 룸 점유 게이지는 인덱스 소유자가 등록한다 — 게이지는 대상을 약참조하므로 강참조를 쥔 쪽이
+        // 등록해야 값이 살아 있다. (`rooms`는 인스턴스 초기화자에서 이미 생성됐다)
+        sessionMetrics.bindRoomGauges(rooms);
     }
 
     @Override
@@ -231,6 +234,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     private void relayAwareness(SessionBridge sender, String senderId, byte[] payload) {
         if (payload.length > MAX_AWARENESS_PAYLOAD_BYTES) {
             // fan-out 증폭 차단. 정상 클라이언트는 여기 닿지 않는다(실제 상태는 수백 바이트).
+            sessionMetrics.awarenessDropped(SessionMetrics.REASON_TOO_LARGE);
             LogEvents.event(log, GatewayLogEvent.AWARENESS_DROPPED)
                     .attr(LogFields.SESSION_ID, senderId)
                     .attr(LogFields.DOC_ID, sender.room().value())
@@ -238,7 +242,8 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .log();
             return;
         }
-        sendToPeers(sender.room(), senderId, codec.encodeAwareness(payload));
+        sessionMetrics.awarenessRelayed(
+                sendToPeers(sender.room(), senderId, codec.encodeAwareness(payload)));
     }
 
     /// 룸에 새로 들어온 세션이 **기존 peer의 커서를 즉시 보게** 한다(§1.3).
@@ -255,7 +260,8 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// 그 확장이 Phase 3의 `awareness:query` 채널이다. Phase 1이 닫는 것은 단일 인스턴스에서의
     /// join 시 peer 발견까지다.
     private void queryExistingPeers(RoomId room, String newSessionId) {
-        sendToPeers(room, newSessionId, codec.encodeQueryAwareness());
+        sessionMetrics.awarenessQuerySent(
+                sendToPeers(room, newSessionId, codec.encodeQueryAwareness()));
     }
 
     /// 룸의 세션 중 `exceptSessionId`를 뺀 전원에게 프레임을 보낸다. 반환값 = 실제 전송된 세션 수.
@@ -273,7 +279,13 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                 continue;
             }
             SessionBridge peer = bridges.get(peerId);
-            if (peer != null && sendBinary(peer.session(), frame)) {
+            if (peer == null) {
+                // 두 map의 정합성이 실제로 벌어진 횟수. 로그는 남기지 않는다 — best-effort의
+                // 정상적 결과라 로그로 남기면 소음이 된다. 지속적으로 크면 가정 재검토 신호(§1.2).
+                sessionMetrics.awarenessDropped(SessionMetrics.REASON_SESSION_GONE);
+                continue;
+            }
+            if (sendBinary(peer.session(), frame)) {
                 sent++;
             }
         }

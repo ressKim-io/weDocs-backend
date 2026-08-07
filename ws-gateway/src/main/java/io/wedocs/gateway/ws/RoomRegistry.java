@@ -72,4 +72,17 @@ final class RoomRegistry {
     int roomCount() {
         return sessionsByRoom.size();
     }
+
+    /// 가장 큰 룸의 세션 수. **Phase 4의 per-doc 세션 캡이 이 값을 근거로 정해진다** —
+    /// 캡을 관측 없이 정하면 정상 부하를 조르거나 아무것도 막지 못하는 값을 고르게 된다.
+    ///
+    /// 호출 시점에 전 룸을 훑는다. 메트릭 스크레이프 주기(수십 초)에 룸 1만 규모를 순회하는 비용은
+    /// 무해하고, 대신 fan-out 핫패스에 최대치 추적 상태를 두지 않는다.
+    int largestRoomSize() {
+        int largest = 0;
+        for (Set<String> members : sessionsByRoom.values()) {
+            largest = Math.max(largest, members.size());
+        }
+        return largest;
+    }
 }
