@@ -87,6 +87,8 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     private final SessionMetrics sessionMetrics;
     private final YProtocolCodec codec = new YProtocolCodec();
     private final Map<String, SessionBridge> bridges = new ConcurrentHashMap<>();
+    /// `bridges`의 룸 역인덱스 — awareness fan-out 대상 조회용. 두 map의 정합성은 best-effort다.
+    private final RoomRegistry rooms = new RoomRegistry();
 
     public DocWebSocketHandler(EngineClient engineClient, SessionMetrics sessionMetrics) {
         this.engineClient = engineClient;
@@ -115,6 +117,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             StreamObserver<ClientFrame> toEngine =
                     engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
             bridges.put(session.getId(), new SessionBridge(roomId, role.get(), guarded, toEngine));
+            rooms.join(roomId, session.getId());
         } catch (RuntimeException e) {
             // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
             // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
@@ -164,7 +167,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = bridges.remove(session.getId());
+        SessionBridge bridge = detach(session.getId());
         if (bridge != null) {
             try {
                 completeQuietly(bridge.toEngine()); // 클라가 떠났음을 엔진에 알림
@@ -184,7 +187,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         // Spring 스펙상 afterConnectionClosed가 이어지지만, gRPC 엔진 스트림은 즉시 정리하여
         // 전송 에러 이후 afterConnectionClosed 호출까지의 시간 동안 엔진이 끊긴 세션에
         // 프레임을 보내는 것을 방지한다. bridges.remove()의 원자성이 이중 정리를 막는다.
-        SessionBridge bridge = bridges.remove(session.getId());
+        SessionBridge bridge = detach(session.getId());
         if (bridge != null) {
             try {
                 completeQuietly(bridge.toEngine());
@@ -266,7 +269,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// 엔진이 스트림을 끝냈거나 WS send가 실패했을 때 WS를 닫는다. 브리지를 먼저 제거해 afterConnectionClosed와 중복 정리를 막되,
     /// 제거에 성공하면 엔진 요청 스트림도 완료시킨다 — sendBinary 실패 경로에서 요청 스트림이 누수되지 않도록(이 정리 누락 시 엔진이 계속 onNext→재실패 반복).
     private void endSession(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = bridges.remove(session.getId());
+        SessionBridge bridge = detach(session.getId());
         try {
             if (bridge != null) {
                 completeQuietly(bridge.toEngine());
@@ -281,6 +284,20 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                 }
             }
         }
+    }
+
+    /// 세션을 `bridges`와 룸 인덱스에서 **함께** 떼어낸다.
+    ///
+    /// 정리 경로가 셋(afterConnectionClosed · handleTransportError · endSession)이므로 하나로 모은다 —
+    /// 흩어놓으면 한 경로에서만 `leave`를 빠뜨리는 형태의 누수(떠난 세션이 fan-out 대상으로 영구 잔류)가
+    /// 리뷰에서 드러나지 않는다. `bridges.remove`의 원자성이 이중 정리를 막으므로, non-null을 받은
+    /// 경로만 후속 정리(엔진 스트림 완료·메트릭)를 수행한다.
+    private SessionBridge detach(String sessionId) {
+        SessionBridge bridge = bridges.remove(sessionId);
+        if (bridge != null) {
+            rooms.leave(bridge.room(), sessionId);
+        }
+        return bridge;
     }
 
     private static byte[] toBytes(ByteBuffer buffer) {
