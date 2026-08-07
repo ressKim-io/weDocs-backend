@@ -133,6 +133,9 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     private final SessionMetrics sessionMetrics;
     private final YProtocolCodec codec = new YProtocolCodec();
     private final Map<String, SessionBridge> bridges = new ConcurrentHashMap<>();
+    /// decorator의 message callback은 sendMessage 호출 스레드에서 동기 실행된다. 스레드별 marker로
+    /// 현재 호출이 실제 queue에 수락됐는지 구분한다(terminal decorator의 무음 return은 false).
+    private final ThreadLocal<Boolean> sendAccepted = new ThreadLocal<>();
     /// `bridges`의 룸 역인덱스 — awareness fan-out 대상 조회용. 두 map의 정합성은 best-effort다.
     private final RoomRegistry rooms = new RoomRegistry();
 
@@ -157,43 +160,60 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         }
         // 이 지점 이후 게이트웨이는 원본 세션에 직접 쓰지 않는다 — 모든 아웃바운드가 데코레이터를 통과한다(§D-6).
         WebSocketSession guarded = guardSends(session);
+        SessionBridge bridge = new SessionBridge(roomId, role.get(), guarded, new SessionLifecycle());
+        // OPENING bridge를 observer에 넘기기 전에 게시한다. room에는 아직 넣지 않으므로 fan-out 대상은
+        // 아니지만, openSync 내부의 동기 terminal callback과 WS close가 같은 lifecycle을 찾을 수 있다.
+        bridges.put(session.getId(), bridge);
         // SerializingStreamObserver로 감싸 gRPC 응답 콜백의 onNext/onError/onCompleted 직렬화를 강제한다.
         // gRPC 런타임이 순차 호출을 보장하지만, 이중 완료 방지 및 구현 버그 방어를 위한 안전망(Req 11.2, 11.3).
         StreamObserver<ServerFrame> toClient =
-                new SerializingStreamObserver<>(engineResponseObserver(guarded, roomId));
+                new SerializingStreamObserver<>(engineResponseObserver(bridge));
         // wire/log 경계마다 .value()로 언랩 — RoomId는 gateway 내부로 관통하고 String이 필요한 sink에서만 푼다.
-        //
-        // try가 openSync **한 줄만** 감싸는 것은 의도다. 등록(bridges·rooms) 이후의 예외까지 이 catch가
-        // 받으면 "엔진 불가"로 오분류되고, 이미 등록된 세션에 대해 정리 없이 close만 하게 된다.
         StreamObserver<ClientFrame> toEngine;
         try {
             toEngine = engineClient.openSync(roomId.value(), role.get().wireValue(), toClient);
         } catch (RuntimeException e) {
-            // openSync 실패 시 세션이 bridges에 등록되지 않아 afterConnectionClosed가 정리할 게 없다.
-            // 열려 있는 WS 세션을 닫아 클라이언트에게 장애를 알린다.
             LogEvents.event(log, GatewayLogEvent.SESSION_OPEN_FAILED)
                     .attr(LogFields.SESSION_ID, session.getId())
                     .attr(LogFields.DOC_ID, roomId.value())
                     .errorType(GatewayErrorType.ENGINE_UNAVAILABLE)
                     .cause(e)
                     .log();
-            closeQuietly(guarded, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
+            endSession(bridge, CloseStatus.SERVER_ERROR.withReason("engine unavailable"));
             return;
         }
-        bridges.put(session.getId(), new SessionBridge(roomId, role.get(), guarded, toEngine));
-        rooms.join(roomId, session.getId());
+        // openSync 내부 callback이 먼저 terminal 상태를 선점했다면 room 등록을 건너뛰고, 방금 반환된
+        // request observer만 monitor 밖에서 완료한다. callback과 activation 중 하나만 room을 소유한다.
+        if (!activateBridge(bridge, toEngine)) {
+            completeQuietly(toEngine);
+            return;
+        }
         // 신규 접속자가 기존 peer의 커서를 **즉시** 보게 한다(§1.3). 등록 이후에 호출한다 —
         // 자기 자신은 대상에서 빠지고(아직 awareness 상태가 없다), 대상 세션의 send 실패는
         // sendBinary가 그 세션 단위로 처리하므로 신규 세션 수립을 실패시키지 않는다.
         queryExistingPeers(roomId, session.getId());
     }
 
+    /// OPENING bridge를 활성화한다. lifecycle monitor 안에서는 인메모리 인덱스만 바꾸며 I/O를 하지 않는다.
+    private boolean activateBridge(SessionBridge bridge, StreamObserver<ClientFrame> toEngine) {
+        synchronized (bridge.lifecycle()) {
+            if (bridge.lifecycle().terminated || bridges.get(bridge.session().getId()) != bridge) {
+                return false;
+            }
+            rooms.join(bridge.room(), bridge.session().getId());
+            bridge.lifecycle().registered = true;
+            bridge.lifecycle().toEngine = toEngine;
+            return true;
+        }
+    }
+
     /// 세션의 아웃바운드를 큐잉·직렬화하는 데코레이터로 감싼다 — 클래스 주석 §D-6의 처방.
-    /// 상한 초과 시 데코레이터는 `SessionLimitExceededException`을 던지고 이후 send를 무음 처리하므로,
-    /// 호출부(`sendBinary`)가 그 예외를 세션 종료로 번역한다.
-    private static WebSocketSession guardSends(WebSocketSession session) {
-        return new ConcurrentWebSocketSessionDecorator(
+    /// message callback은 queue 수락 뒤에만 호출되므로 terminal 상태의 무음 거절과 정상 반환을 구분한다.
+    WebSocketSession guardSends(WebSocketSession session) {
+        ConcurrentWebSocketSessionDecorator guarded = new ConcurrentWebSocketSessionDecorator(
                 session, SEND_TIME_LIMIT_MS, SEND_BUFFER_SIZE_LIMIT_BYTES);
+        guarded.setMessageCallback(message -> sendAccepted.set(true));
+        return guarded;
     }
 
     @Override
@@ -203,8 +223,8 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
         // awareness는 엔진을 통과하지 않는다(SDD §6.1, M3 판단 1) — 룸 릴레이로 끝난다.
         // 이 판정은 top-level 타입 varUint 하나만 읽으므로 sync 경로 비용에 영향이 없다.
         SessionBridge sender = bridges.get(sessionId);
-        if (sender == null) {
-            return; // 이미 정리된 세션 — 아래 computeIfPresent의 no-op과 동일한 결과
+        if (sender == null || sender.toEngine() == null) {
+            return; // 이미 정리됐거나 아직 OPENING인 세션 — 엔진·룸 어느 쪽에도 전달하지 않는다.
         }
         Optional<byte[]> awareness;
         try {
@@ -234,10 +254,14 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     /// 락을 요구하는 형태가 된다.
     private void forwardToEngine(String sessionId, byte[] payload) {
         bridges.computeIfPresent(sessionId, (id, bridge) -> {
+            StreamObserver<ClientFrame> toEngine = bridge.toEngine();
+            if (toEngine == null) {
+                return bridge; // OPENING — activation 전 프레임은 엔진에 보낼 수 없다.
+            }
             try {
                 codec.decodeInbound(payload, bridge.room().value())
                         .filter(frame -> isPermitted(frame, bridge, id))
-                        .ifPresent(bridge.toEngine()::onNext);
+                        .ifPresent(toEngine::onNext);
             } catch (RuntimeException e) {
                 // 손상 프레임 한 개로 세션을 죽이지 않는다 — 그 프레임만 무시(엔진의 손상 update 처리와 대칭).
                 frameDropped(id, bridge.room(), e);
@@ -333,14 +357,7 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = detach(session.getId());
-        if (bridge != null) {
-            try {
-                completeQuietly(bridge.toEngine()); // 클라가 떠났음을 엔진에 알림
-            } finally {
-                sessionMetrics.sessionClosed();
-            }
-        }
+        finishCleanup(detach(session.getId()));
     }
 
     @Override
@@ -352,15 +369,8 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                 .log();
         // Spring 스펙상 afterConnectionClosed가 이어지지만, gRPC 엔진 스트림은 즉시 정리하여
         // 전송 에러 이후 afterConnectionClosed 호출까지의 시간 동안 엔진이 끊긴 세션에
-        // 프레임을 보내는 것을 방지한다. bridges.remove()의 원자성이 이중 정리를 막는다.
-        SessionBridge bridge = detach(session.getId());
-        if (bridge != null) {
-            try {
-                completeQuietly(bridge.toEngine());
-            } finally {
-                sessionMetrics.sessionClosed();
-            }
-        }
+        // 프레임을 보내는 것을 방지한다. lifecycle terminal 전이가 이중 정리를 막는다.
+        finishCleanup(detach(session.getId()));
     }
 
     /// viewer 세션이 보낸 쓰기 프레임을 엔진에 넘기지 않는다 — 인가 결정(ADR-0014)의 1차 집행이다.
@@ -384,46 +394,45 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
     }
 
     /// 엔진 → 브라우저 방향. 이 콜백만이 WS의 유일한 writer다(§D-6).
-    private StreamObserver<ServerFrame> engineResponseObserver(WebSocketSession session, RoomId room) {
+    private StreamObserver<ServerFrame> engineResponseObserver(SessionBridge bridge) {
         return new StreamObserver<>() {
             @Override
             public void onNext(ServerFrame frame) {
-                codec.encodeOutbound(frame).ifPresent(bytes -> sendBinary(session, bytes));
+                codec.encodeOutbound(frame).ifPresent(bytes -> sendBinary(bridge.session(), bytes));
             }
 
             @Override
             public void onError(Throwable t) {
                 LogEvents.event(log, GatewayLogEvent.ENGINE_STREAM_FAILED)
-                        .attr(LogFields.SESSION_ID, session.getId())
-                        .attr(LogFields.DOC_ID, room.value())
+                        .attr(LogFields.SESSION_ID, bridge.session().getId())
+                        .attr(LogFields.DOC_ID, bridge.room().value())
                         .errorType(GatewayErrorType.ENGINE_STREAM_ERROR)
                         .cause(t)
                         .log();
-                endSession(session, CloseStatus.SERVER_ERROR);
+                endSession(bridge, CloseStatus.SERVER_ERROR);
             }
 
             @Override
             public void onCompleted() {
-                endSession(session, CloseStatus.NORMAL);
+                endSession(bridge, CloseStatus.NORMAL);
             }
         };
     }
 
-    /// 반환값 = **송신이 수락되었는가**. "상대에게 도달했는가"가 아니다 — 데코레이터는 다른 스레드가
-    /// flush 락을 쥐고 있으면 큐에 넣고 정상 반환하므로, true는 큐 수락까지만 보장한다.
-    /// 그래도 실패(끊긴 클라이언트)와는 구분해야 한다: 실패한 대상까지 "릴레이됨"으로 집계하면
-    /// 처리량 지표가 거짓말을 한다.
-    private boolean sendBinary(WebSocketSession session, byte[] bytes) {
+    /// 반환값 = **decorator queue가 송신을 수락했는가**. "상대에게 도달했는가"가 아니다.
+    /// terminal decorator는 예외 없이 return하므로, 단순 정상 반환이 아니라 message callback marker를 본다.
+    boolean sendBinary(WebSocketSession session, byte[] bytes) {
+        sendAccepted.set(false);
         try {
             session.sendMessage(new BinaryMessage(bytes));
-            return true;
+            return Boolean.TRUE.equals(sendAccepted.get());
         } catch (SessionLimitExceededException e) {
-            // 데코레이터 상한 초과 = 느린 클라이언트. 전송 오류(SEND_FAILED)와 **구분해서** 남긴다 —
-            // 원인이 네트워크가 아니라 우리가 정한 상한이고, 처방도 다르다(Phase 4의 수치 재조정).
-            sessionMetrics.sendQueueExceeded();
+            // 데코레이터의 buffer 또는 send-time 상한 초과. Spring이 같은 예외 타입을 쓰므로
+            // 세부 원인을 추측하지 않고 aggregate send-limit 계약으로 기록한다.
+            sessionMetrics.sendLimitExceeded();
             LogEvents.event(log, GatewayLogEvent.SEND_LIMIT_EXCEEDED)
                     .attr(LogFields.SESSION_ID, session.getId())
-                    .errorType(GatewayErrorType.SEND_BUFFER_EXCEEDED)
+                    .errorType(GatewayErrorType.SEND_LIMIT_EXCEEDED)
                     .cause(e)
                     .log();
             endSession(session, CloseStatus.SERVER_ERROR);
@@ -436,41 +445,64 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
                     .log();
             endSession(session, CloseStatus.SERVER_ERROR);
             return false;
-        }
-    }
-
-    /// 엔진이 스트림을 끝냈거나 WS send가 실패했을 때 WS를 닫는다. 브리지를 먼저 제거해 afterConnectionClosed와 중복 정리를 막되,
-    /// 제거에 성공하면 엔진 요청 스트림도 완료시킨다 — sendBinary 실패 경로에서 요청 스트림이 누수되지 않도록(이 정리 누락 시 엔진이 계속 onNext→재실패 반복).
-    private void endSession(WebSocketSession session, CloseStatus status) {
-        SessionBridge bridge = detach(session.getId());
-        try {
-            if (bridge != null) {
-                completeQuietly(bridge.toEngine());
-            }
         } finally {
-            // closeQuietly와 메트릭은 completeQuietly 예외(방어적)에 관계없이 실행되어야 한다.
-            try {
-                closeQuietly(session, status);
-            } finally {
-                if (bridge != null) {
-                    sessionMetrics.sessionClosed();
-                }
-            }
+            sendAccepted.remove();
         }
     }
 
-    /// 세션을 `bridges`와 룸 인덱스에서 **함께** 떼어낸다.
-    ///
-    /// 정리 경로가 셋(afterConnectionClosed · handleTransportError · endSession)이므로 하나로 모은다 —
-    /// 흩어놓으면 한 경로에서만 `leave`를 빠뜨리는 형태의 누수(떠난 세션이 fan-out 대상으로 영구 잔류)가
-    /// 리뷰에서 드러나지 않는다. `bridges.remove`의 원자성이 이중 정리를 막으므로, non-null을 받은
-    /// 경로만 후속 정리(엔진 스트림 완료·메트릭)를 수행한다.
-    private SessionBridge detach(String sessionId) {
-        SessionBridge bridge = bridges.remove(sessionId);
-        if (bridge != null) {
-            rooms.leave(bridge.room(), sessionId);
+    /// 엔진이 스트림을 끝냈거나 WS send가 실패했을 때 WS를 닫는다. terminal 전이를 먼저 선점해
+    /// afterConnectionClosed와 중복 정리를 막고, gRPC 완료·WS close·메트릭은 lifecycle monitor 밖에서 수행한다.
+    private void endSession(WebSocketSession session, CloseStatus status) {
+        SessionBridge bridge = bridges.get(session.getId());
+        finishCleanup(bridge == null ? null : detach(bridge));
+        closeQuietly(session, status);
+    }
+
+    /// 엔진 callback은 자신이 생성된 정확한 bridge를 종료한다. 같은 session id가 재사용되더라도
+    /// 늦은 callback이 새 bridge를 제거하지 않도록 조건부 remove를 사용한다.
+    private void endSession(SessionBridge bridge, CloseStatus status) {
+        finishCleanup(detach(bridge));
+        closeQuietly(bridge.session(), status);
+    }
+
+    /// 세션을 `bridges`와 룸 인덱스에서 **하나의 lifecycle 전이로** 떼어낸다.
+    /// monitor 안에서는 map/index 상태만 바꾸고, gRPC·WS I/O와 메트릭은 `finishCleanup`에서 수행한다.
+    private SessionCleanup detach(String sessionId) {
+        SessionBridge bridge = bridges.get(sessionId);
+        return bridge == null ? null : detach(bridge);
+    }
+
+    private SessionCleanup detach(SessionBridge bridge) {
+        SessionLifecycle lifecycle = bridge.lifecycle();
+        synchronized (lifecycle) {
+            if (lifecycle.terminated) {
+                return null;
+            }
+            lifecycle.terminated = true;
+            if (!bridges.remove(bridge.session().getId(), bridge)) {
+                return null;
+            }
+            boolean registered = lifecycle.registered;
+            if (registered) {
+                rooms.leave(bridge.room(), bridge.session().getId());
+            }
+            lifecycle.registered = false;
+            StreamObserver<ClientFrame> toEngine = lifecycle.toEngine;
+            lifecycle.toEngine = null;
+            return new SessionCleanup(toEngine, registered);
         }
-        return bridge;
+    }
+
+    private void finishCleanup(SessionCleanup cleanup) {
+        if (cleanup == null) {
+            return;
+        }
+        if (cleanup.toEngine() != null) {
+            completeQuietly(cleanup.toEngine());
+        }
+        if (cleanup.registered()) {
+            sessionMetrics.sessionClosed();
+        }
     }
 
     private static byte[] toBytes(ByteBuffer buffer) {
@@ -504,6 +536,23 @@ public class DocWebSocketHandler extends BinaryWebSocketHandler {
             RoomId room,
             SessionRole role,
             WebSocketSession session,
-            StreamObserver<ClientFrame> toEngine) {
+            SessionLifecycle lifecycle) {
+
+        StreamObserver<ClientFrame> toEngine() {
+            return lifecycle.toEngine;
+        }
+    }
+
+    /// OPENING → ACTIVE 또는 TERMINATED 전이를 조정하는 세션별 상태. 필드 접근은 lifecycle monitor
+    /// 아래에서 수행하되, `toEngine` 읽기는 inbound hot path에서 monitor를 잡지 않도록 volatile이다.
+    private static final class SessionLifecycle {
+
+        private volatile StreamObserver<ClientFrame> toEngine;
+        private boolean registered;
+        private boolean terminated;
+    }
+
+    /// lifecycle monitor에서 꺼낸 정리 작업. 외부 I/O는 이 불변 값으로 monitor 밖에서 실행한다.
+    private record SessionCleanup(StreamObserver<ClientFrame> toEngine, boolean registered) {
     }
 }

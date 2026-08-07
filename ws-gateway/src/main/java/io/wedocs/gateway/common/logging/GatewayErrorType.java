@@ -56,9 +56,9 @@ public enum GatewayErrorType {
     /// 클라이언트로의 메시지 전송 실패.
     SEND_FAILED("send_failed"),
 
-    /// 세션 송신 큐가 상한을 초과 — 느린 클라이언트(`ConcurrentWebSocketSessionDecorator` 상한).
-    /// `send_failed`와 구분한다: 원인이 네트워크 오류가 아니라 우리가 정한 버퍼·시간 상한이다.
-    SEND_BUFFER_EXCEEDED("send_buffer_exceeded"),
+    /// 세션 송신 buffer 또는 send-time 상한 초과 — 느린 클라이언트.
+    /// `send_failed`와 구분하되, Spring이 두 제한에 같은 예외를 사용하므로 세부 원인은 단정하지 않는다.
+    SEND_LIMIT_EXCEEDED("send_limit_exceeded"),
 
     // ── 비즈니스 로직 ──
 

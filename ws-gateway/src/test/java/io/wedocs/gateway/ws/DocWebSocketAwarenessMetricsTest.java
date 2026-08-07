@@ -110,6 +110,35 @@ class DocWebSocketAwarenessMetricsTest {
     }
 
     @Test
+    @DisplayName("openSync 반환 전 엔진 종료 callback도 bridge·room ghost 없이 request observer를 정리한다")
+    void engineCompletionDuringOpen_doesNotLeaveGhostMembership() throws Exception {
+        // Given/When: 엔진이 openSync 내부에서 동기적으로 완료된다(기존 등록 순서의 race를 결정적으로 재현).
+        engineClient.completeDuringOpen = true;
+        RecordingWsSession terminated = openSession(ROOM_A, SessionRole.EDITOR);
+        StubEngineClient.Opened terminatedOpen = engineClient.latest();
+
+        // Then: 반환된 request observer까지 완료되고 room 인덱스에는 흔적이 없다.
+        assertThat(terminated.closeStatus).isEqualTo(CloseStatus.NORMAL);
+        assertThat(terminatedOpen.toEngine().completedCount).isEqualTo(1);
+        assertThat(gauge(SessionMetrics.ROOMS_ACTIVE)).isZero();
+        assertThat(gauge(SessionMetrics.ROOM_SESSIONS_MAX)).isZero();
+
+        // And: 이후 정상 룸 fan-out이 ghost를 만나 session_gone으로 드롭되지 않는다.
+        engineClient.completeDuringOpen = false;
+        RecordingWsSession sender = openSession(ROOM_A, SessionRole.EDITOR);
+        RecordingWsSession peer = openSession(ROOM_A, SessionRole.EDITOR);
+        sender.sent.clear();
+        peer.sent.clear();
+        handler.handleMessage(sender, new BinaryMessage(AWARENESS_FRAME));
+
+        assertThat(counter(SessionMetrics.AWARENESS_RELAYED)).isEqualTo(1.0);
+        assertThat(droppedCount(SessionMetrics.REASON_SESSION_GONE)).isZero();
+        assertThat(peer.sent).containsExactly(AWARENESS_FRAME);
+        assertThat(gauge(SessionMetrics.ROOMS_ACTIVE)).isEqualTo(1.0);
+        assertThat(gauge(SessionMetrics.ROOM_SESSIONS_MAX)).isEqualTo(2.0);
+    }
+
+    @Test
     @DisplayName("룸 점유 게이지가 최대 룸 크기와 활성 룸 수를 노출한다")
     void roomGauges_exposeMaxOccupancyAndActiveRooms() {
         openSession(ROOM_A, SessionRole.EDITOR);

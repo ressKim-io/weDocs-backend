@@ -12,7 +12,7 @@ public class SessionMetrics {
 
     static final String WRITE_DROPPED = "ws.write.dropped";   // → ws_write_dropped_total
     static final String SESSION_CLOSED = "ws.session.closed"; // → ws_session_closed_total
-    static final String SEND_QUEUE_EXCEEDED = "ws.send.queue.exceeded"; // → ws_send_queue_exceeded_total
+    static final String SEND_LIMIT_EXCEEDED = "ws.send.limit.exceeded"; // → ws_send_limit_exceeded_total
 
     // ── awareness (M3 Phase 1, plan §1.6) ──
     static final String AWARENESS_RELAYED = "ws.awareness.relayed";
@@ -47,16 +47,17 @@ public class SessionMetrics {
     }
 
     /// WS 세션이 종료된 1건 — 경로(정상 close, 전송 에러, 엔진 스트림 종료) 불문.
-    /// bridges.remove()가 일어날 때마다 호출되어야 한다. 미호출 시 세션 누수를 감지할 수 없다.
+    /// 활성 room 등록이 제거될 때마다 호출되어야 한다. 미호출 시 세션 누수를 감지할 수 없다.
     public void sessionClosed() {
         registry.counter(SESSION_CLOSED).increment();
     }
 
-    /// 세션 송신 큐 상한 초과로 세션을 끊은 1건 = **느린 클라이언트**(M3 plan §1.6).
+    /// 세션 송신 buffer 또는 send-time 상한 초과로 세션을 끊은 1건 = **느린 클라이언트**.
+    /// Spring은 두 제한에 같은 `SessionLimitExceededException`을 사용하므로 원인을 세분하지 않는다.
     /// 이 값이 오르면 상한이 낮은 것인지 클라이언트가 실제로 못 따라오는 것인지를 갈라야 한다 —
     /// Phase 4의 버퍼·시간 상한 정량화가 직접 이 신호를 근거로 삼는다.
-    public void sendQueueExceeded() {
-        registry.counter(SEND_QUEUE_EXCEEDED).increment();
+    public void sendLimitExceeded() {
+        registry.counter(SEND_LIMIT_EXCEEDED).increment();
     }
 
     /// awareness 릴레이 처리량 — **송신이 수락된 대상 세션 수**(fan-out 간선 수)를 더한다.
@@ -66,7 +67,7 @@ public class SessionMetrics {
     /// 프레임 수만 세면 부하를 과소평가한다.
     ///
     /// ⚠️ `relayed + dropped`는 시도 횟수가 아니다. 전송 실패(끊긴 클라이언트)는 여기서 빠지고
-    /// `ws.send.failed`·`ws.send.queue.exceeded`로 집계된다 — 이중 계상을 피한 결과다.
+    /// `ws.send.failed`·`ws.send.limit.exceeded`로 집계된다 — 이중 계상을 피한 결과다.
     public void awarenessRelayed(int targets) {
         registry.counter(AWARENESS_RELAYED).increment(targets);
     }

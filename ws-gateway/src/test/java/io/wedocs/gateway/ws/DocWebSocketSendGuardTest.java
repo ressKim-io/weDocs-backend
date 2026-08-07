@@ -91,13 +91,9 @@ class DocWebSocketSendGuardTest {
     @Test
     @DisplayName("핸들러가 감싸는 대상은 ConcurrentWebSocketSessionDecorator이고 상한이 배선돼 있다")
     void establishedSession_isWrappedWithConfiguredLimits() {
-        // Given/When: 상한 상수로 감싼 데코레이터를 직접 만들어 계약을 고정한다.
-        // (핸들러 내부의 감싼 세션은 외부에 노출되지 않으므로, 상한 값 자체를 회귀로 묶는다)
+        // Given/When: production factory로 감싸 상한과 acceptance callback 배선을 함께 고정한다.
         RecordingWsSession delegate = new RecordingWsSession();
-        WebSocketSession guarded = new ConcurrentWebSocketSessionDecorator(
-                delegate,
-                DocWebSocketHandler.SEND_TIME_LIMIT_MS,
-                DocWebSocketHandler.SEND_BUFFER_SIZE_LIMIT_BYTES);
+        WebSocketSession guarded = handler.guardSends(delegate);
 
         // Then: 송신 큐 상한이 최대 아웃바운드 프레임(4MiB)보다 크다 —
         // 이보다 작으면 느린 클라이언트가 *정상* 초기 동기화 중에 끊긴다.
@@ -108,8 +104,22 @@ class DocWebSocketSendGuardTest {
     }
 
     @Test
-    @DisplayName("송신 상한 초과는 세션을 끊고 ws.send.queue.exceeded로 집계된다(전송 오류와 구분)")
-    void sendLimitExceeded_closesSessionAndCountsQueueExceeded() {
+    @DisplayName("terminal decorator의 무음 거절은 송신 수락으로 집계하지 않는다")
+    void terminalDecorator_silentRejectionIsNotAccepted() throws Exception {
+        // Given: 정상 close된 decorator는 이후 sendMessage를 예외 없이 무시한다.
+        RecordingWsSession delegate = new RecordingWsSession();
+        WebSocketSession guarded = handler.guardSends(delegate);
+        guarded.close(CloseStatus.NORMAL);
+
+        // When/Then: 정상 반환 자체가 아니라 message callback이 실행돼야 acceptance=true다.
+        assertThat(handler.sendBinary(guarded, new byte[]{0x01})).isFalse();
+        assertThat(delegate.sent).isEmpty();
+        assertThat(counter(SessionMetrics.SEND_LIMIT_EXCEEDED)).isZero();
+    }
+
+    @Test
+    @DisplayName("송신 상한 초과는 세션을 끊고 ws.send.limit.exceeded로 집계된다(전송 오류와 구분)")
+    void sendLimitExceeded_closesSessionAndCountsAggregateLimit() {
         // Given: delegate가 데코레이터 상한 초과 예외를 던지는 세션
         RecordingWsSession session = openSession();
         session.failMode = RecordingWsSession.FailMode.LIMIT;
@@ -118,16 +128,16 @@ class DocWebSocketSendGuardTest {
         engineClient.latest().toClient().onNext(
                 ServerFrame.newBuilder().setUpdate(ByteString.copyFrom(new byte[]{0x01})).build());
 
-        // Then: 세션 종료 + 전용 카운터 증분 + 엔진 스트림 정리(누수 방지)
+        // Then: 세션 종료 + aggregate 카운터 증분 + 엔진 스트림 정리(누수 방지)
         assertThat(session.closeStatus).isEqualTo(CloseStatus.SERVER_ERROR);
-        assertThat(counter(SessionMetrics.SEND_QUEUE_EXCEEDED)).isEqualTo(1.0);
+        assertThat(counter(SessionMetrics.SEND_LIMIT_EXCEEDED)).isEqualTo(1.0);
         assertThat(counter(SessionMetrics.SESSION_CLOSED)).isEqualTo(1.0);
         assertThat(engineClient.latest().toEngine().completedCount).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("전송 오류(IOException)는 상한 초과로 집계되지 않는다 — 두 실패 모드의 구분 회귀")
-    void sendIoFailure_doesNotCountAsQueueExceeded() {
+    @DisplayName("전송 오류(IOException)는 송신 상한 초과로 집계되지 않는다 — 두 실패 모드의 구분 회귀")
+    void sendIoFailure_doesNotCountAsLimitExceeded() {
         // Given: delegate가 전송 계층 오류를 던지는 세션
         RecordingWsSession session = openSession();
         session.failMode = RecordingWsSession.FailMode.IO;
@@ -138,7 +148,7 @@ class DocWebSocketSendGuardTest {
 
         // Then: 세션은 끊기지만 상한 카운터는 오르지 않는다(원인 오분류 방지)
         assertThat(session.closeStatus).isEqualTo(CloseStatus.SERVER_ERROR);
-        assertThat(counter(SessionMetrics.SEND_QUEUE_EXCEEDED)).isZero();
+        assertThat(counter(SessionMetrics.SEND_LIMIT_EXCEEDED)).isZero();
         assertThat(counter(SessionMetrics.SESSION_CLOSED)).isEqualTo(1.0);
     }
 

@@ -22,6 +22,7 @@ final class StubEngineClient extends EngineClient {
 
     final List<Opened> opened = new CopyOnWriteArrayList<>();
     boolean failOnOpen;
+    boolean completeDuringOpen;
 
     StubEngineClient() {
         super(new EngineProperties("localhost:1"));
@@ -34,7 +35,13 @@ final class StubEngineClient extends EngineClient {
             throw new IllegalStateException("engine unavailable");
         }
         RequestSpy toEngine = new RequestSpy();
-        opened.add(new Opened(docId, role, responseObserver, toEngine));
+        Opened openedStream = new Opened(docId, role, responseObserver, toEngine);
+        opened.add(openedStream);
+        if (completeDuringOpen) {
+            // openSync가 request observer를 반환하기 전에 엔진 terminal callback이 도착하는 race를
+            // 결정적으로 재현한다. handler는 이 시점에도 OPENING lifecycle을 찾아 정리해야 한다.
+            responseObserver.onCompleted();
+        }
         return toEngine;
     }
 

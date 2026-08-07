@@ -113,7 +113,7 @@ public enum GatewayLogEvent {
             Set.of(LogFields.SESSION_ID, LogFields.ERROR_TYPE),
             "ws send failed"),
 
-    /// 송신 큐 상한 초과 — 느린 클라이언트로 세션 종료(데코레이터 버퍼·시간 상한).
+    /// 송신 상한 초과 — 느린 클라이언트로 세션 종료(데코레이터 buffer·send-time aggregate 상한).
     SEND_LIMIT_EXCEEDED(
             "ws_send_limit_exceeded", Level.WARN, null, null,
             Set.of(LogFields.SESSION_ID, LogFields.ERROR_TYPE),
