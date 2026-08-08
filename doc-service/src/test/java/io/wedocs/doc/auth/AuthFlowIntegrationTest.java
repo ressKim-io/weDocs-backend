@@ -146,6 +146,61 @@ class AuthFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("현재 사용자 조회 성공 — JWT sub에 바인딩된 공개 프로필만 반환")
+    void currentUser_returnsSubjectBoundPublicProfile() throws Exception {
+        // Given: 다른 사용자도 존재해야 Alice 토큰이 Alice에 바인딩됨을 검증할 수 있다.
+        String aliceEmail = randomEmail();
+        String bobEmail = randomEmail();
+        mockMvc.perform(signup(aliceEmail, "password-1234", "Alice"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(signup(bobEmail, "password-1234", "Bob"))
+                .andExpect(status().isCreated());
+        User alice = users.findByEmail(aliceEmail).orElseThrow();
+        String token = accessToken(aliceEmail);
+
+        // When / Then: 요청 값이 아니라 JWT sub가 조회 대상을 결정하고 비밀 필드는 직렬화되지 않는다.
+        mockMvc.perform(get("/api/users/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(alice.getId().toString()))
+                .andExpect(jsonPath("$.email").value(aliceEmail))
+                .andExpect(jsonPath("$.displayName").value("Alice"))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                .andExpect(jsonPath("$.systemRole").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("현재 사용자 조회는 무토큰이면 401")
+    void currentUser_withoutToken_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/users/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("유효한 JWT의 사용자가 없으면 404 user-not-found")
+    void currentUser_missingUser_notFound() throws Exception {
+        // Given: 토큰 발급 뒤 사용자만 삭제하여 서명·issuer·exp·sub는 모두 유효하게 유지한다.
+        String email = randomEmail();
+        mockMvc.perform(signup(email, "password-1234", "deleted"))
+                .andExpect(status().isCreated());
+        User user = users.findByEmail(email).orElseThrow();
+        String token = accessToken(email);
+        users.deleteById(user.getId());
+        users.flush();
+        assertThat(users.findById(user.getId())).isEmpty();
+
+        // When / Then: 인증 실패가 아니라 현재 서비스 계약의 도메인 조회 실패다.
+        mockMvc.perform(get("/api/users/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.type")
+                        .value("https://wedocs.io/errors/user-not-found"))
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+    }
+
+    @Test
     @DisplayName("미존재 이메일과 비밀번호 불일치는 구분 불가능한 동일 401 (계정 존재 비노출)")
     void login_failuresAreIndistinguishable() throws Exception {
         // Given
@@ -162,6 +217,13 @@ class AuthFlowIntegrationTest {
 
         // Then
         assertThat(wrongPasswordBody).isEqualTo(unknownEmailBody);
+    }
+
+    private String accessToken(String email) throws Exception {
+        String body = mockMvc.perform(login(email, "password-1234"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("accessToken").asString();
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder signup(

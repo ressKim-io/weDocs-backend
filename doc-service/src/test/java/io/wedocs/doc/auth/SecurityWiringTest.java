@@ -6,11 +6,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 // Boot 4.x: 테스트 슬라이스 모듈 분리 — @WebMvcTest 패키지가 spring-boot-webmvc-test로 이동(실측).
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -64,6 +69,26 @@ class SecurityWiringTest {
     }
 
     @Test
+    @DisplayName("sub 누락 또는 UUID가 아닌 정상 서명 토큰은 401")
+    void invalidSubject_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/anything")
+                        .header("Authorization", "Bearer " + signedToken(null)))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/anything")
+                        .header("Authorization", "Bearer " + signedToken("not-a-uuid")))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("정상 서명·UUID sub여도 issuer가 다르면 401")
+    void wrongIssuer_unauthorized() throws Exception {
+        String token = signedToken(UUID.randomUUID().toString(), "https://other-issuer.invalid");
+
+        mockMvc.perform(get("/api/anything").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     @DisplayName("위조 토큰(서명 불일치)은 401")
     void withForgedToken_unauthorized() throws Exception {
         // 다른 키로 서명한 토큰 — 우리 공개키 검증에서 거부돼야 한다
@@ -79,5 +104,22 @@ class SecurityWiringTest {
 
         mockMvc.perform(get("/api/anything").header("Authorization", "Bearer " + forged))
                 .andExpect(status().isUnauthorized());
+    }
+
+    private String signedToken(String subject) {
+        return signedToken(subject, jwtProperties.issuer());
+    }
+
+    private String signedToken(String subject, String issuer) {
+        Instant now = Instant.now();
+        JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
+                .issuer(issuer)
+                .issuedAt(now)
+                .expiresAt(now.plus(Duration.ofHours(1)));
+        if (subject != null) {
+            claims.subject(subject);
+        }
+        JwsHeader header = JwsHeader.with(SignatureAlgorithm.RS256).build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(header, claims.build())).getTokenValue();
     }
 }
