@@ -2,6 +2,7 @@ package io.wedocs.doc.auth;
 
 import io.wedocs.doc.common.error.ConflictException;
 import io.wedocs.doc.common.error.DocErrorCode;
+import io.wedocs.doc.common.error.NotFoundException;
 import io.wedocs.doc.common.error.UnauthorizedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -44,6 +45,12 @@ public class AuthService {
         } catch (DataIntegrityViolationException e) {
             throw new ConflictException(DocErrorCode.EMAIL_ALREADY_USED, e); // 레이스 패자도 사전검사와 동일한 409로 수렴
         }
+    }
+
+    @Transactional(readOnly = true)
+    public User currentUser(UUID userId) {
+        return users.findById(userId)
+                .orElseThrow(() -> new NotFoundException(DocErrorCode.USER_NOT_FOUND));
     }
 
     /// 트랜잭션 없음(의도, spring.md 클래스 레벨 readOnly 관례의 명시적 예외):
